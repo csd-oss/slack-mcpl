@@ -205,6 +205,8 @@ export interface SlackWebLike {
     remove(args: { channel: string; timestamp: string; name: string }): Promise<unknown>;
   };
   /** Optional so test fakes need not carry it; the real WebClient has it. */
+  filesUploadV2?(args: Record<string, unknown>): Promise<{ files?: Array<{ files?: Array<{ id?: string }> }> }>;
+  /** Optional so test fakes need not carry it; the real WebClient has it. */
   assistant?: {
     threads: { setStatus(args: { channel_id: string; thread_ts: string; status: string }): Promise<unknown> };
   };
@@ -476,6 +478,27 @@ export class SlackAdapter {
     // Slack clears a thread's status when the bot posts in that thread.
     if (opts.threadTs && this.statusOn.get(channelId)?.ts === opts.threadTs) this.statusOn.delete(channelId);
     return { messageId: result.ts ? String(result.ts) : '' };
+  }
+
+  /** Upload a file (files.getUploadURLExternal + completeUploadExternal).
+   *  Same write checks as sendMessage. Needs the files:write scope. */
+  async uploadFile(
+    channelId: string,
+    file: { filename: string; data: Buffer; title?: string; comment?: string; threadTs?: string },
+  ): Promise<{ fileId: string }> {
+    this.assertWritable(channelId);
+    await this.assertNotDm(channelId);
+    if (!this.web.filesUploadV2) throw new Error('File upload is not available');
+    const result = await this.web.filesUploadV2({
+      channel_id: channelId,
+      file: file.data,
+      filename: file.filename,
+      title: file.title ?? file.filename,
+      ...(file.comment ? { initial_comment: file.comment } : {}),
+      ...(file.threadTs ? { thread_ts: file.threadTs } : {}),
+    });
+    void this.clearAck(channelId);
+    return { fileId: result.files?.[0]?.files?.[0]?.id ?? '' };
   }
 
   /** With SLACK_DISABLE_DMS, only a conversation Slack confirmed to be a
