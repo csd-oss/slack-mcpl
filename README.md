@@ -97,6 +97,36 @@ OAuth flow so the installed token receives the new scope. Editing the app's
 scope list alone does not update the token. Without the scope, Slack refuses
 uploads with `missing_scope`.
 
+## Explicit access policy
+
+Embedded callers can opt in with `connectSlack({ ..., accessPolicy })`, or call
+`adapter.configureAccessPolicy(policy)` once before starting Socket Mode:
+
+```ts
+adapter.configureAccessPolicy({
+  writeChannels: ['CWRITABLE'],
+  dmUsers: [],
+  readJoinedChannels: true,
+});
+```
+
+This separates joined-channel reads from configured channel writes and allowed
+one-to-one DM peers. An empty `dmUsers` list denies all DMs; group DMs are denied.
+Each incoming event and operation validates fresh conversation metadata and the
+required token scopes. Listing includes only confirmed joined channels and
+allowed DMs, even with `includeNonMember`. User-directory lookup remains global
+metadata discovery with `users:read`; it does not grant message access. Legacy
+write allowlists still apply as an additional restriction. Without an explicit
+policy, existing flags and behavior are unchanged.
+
+With this profile, `fetch_attachment` requires `channelId` and `fileId` rather
+than trusting a supplied URL. It checks fresh readable membership, requires
+`files:read`, verifies that `files.info` associates the exact file with that
+conversation, and downloads only Slack's canonical private URL with redirects
+refused. Live messages, history, threads and backscroll provide these IDs;
+missing file IDs are marked unavailable. Without the profile, URL-only fetches
+remain compatible. File uploads require both the `comms` and `files` MCPL classes.
+
 ## Reply to a specific thread
 
 When answering a particular message, use `reply_message` to select its thread explicitly. Automatic prose delivery through `channels/publish` carries no thread or triggering message ID. The server uses the thread of the last message it passed to the host from that Slack conversation instead, whether or not the host accepted it, so another message can redirect the reply to a different thread, or to the channel's top level ([#6](https://github.com/anima-research/slack-mcpl/issues/6)). The server keeps that in memory only: after a restart, a publish goes to the top level until the server passes on a message from the conversation.

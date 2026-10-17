@@ -201,11 +201,14 @@ export const toolDefinitions: ToolDefinition[] = [
     description:
       'Fetch a Slack file attachment by URL and return its bytes inline: images as image ' +
       'blocks, text-ish files decoded, other binary as base64. URLs come from incoming ' +
-      'message attachment refs (url_private, fetched with bot auth). Max 5MB.',
+      'message attachment refs (url_private, fetched with bot auth). Max 5MiB. ' +
+      'With an explicit access profile, channelId and fileId are required: membership and file association are checked, and redirects are refused.',
     inputSchema: {
       type: 'object',
       properties: {
         url: { type: 'string', description: 'Full url_private of the Slack file (https://files.slack.com/…)' },
+        channelId: { type: 'string', description: 'Readable Slack conversation containing this file; required with an explicit access profile' },
+        fileId: { type: 'string', description: 'Slack file ID (F…); required with an explicit access profile, which fetches the canonical URL from files.info' },
       },
       required: ['url'],
     },

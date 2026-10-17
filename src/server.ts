@@ -48,6 +48,7 @@ import { StateTracker } from './state.js';
 import { CapabilityGrant } from './grant.js';
 import { McplRpcError, capabilityDenied } from './errors.js';
 import { explainSlackError } from './slack-errors.js';
+import { associatedFileUrl } from './file-access.js';
 import {
   fetchAttachmentBytes,
   MAX_ATTACHMENT_BYTES,
@@ -337,7 +338,10 @@ export class SlackMcplServer {
     try {
       switch (req.method) {
         case 'tools/list': {
-          const listed = this.slack.dmsWritable ? toolDefinitions : toolDefinitions.filter((t) => t.name !== 'send_dm');
+          const listed = (this.slack.dmsWritable ? toolDefinitions : toolDefinitions.filter((t) => t.name !== 'send_dm'))
+            .map((tool) => this.slack.hasExplicitAccessPolicy && tool.name === 'fetch_attachment'
+              ? { ...tool, inputSchema: { ...tool.inputSchema, required: ['channelId', 'fileId'] } }
+              : tool);
           // MCPL RFC-008: each tool carries its class in _meta['mcpl/class'].
           conn.sendResponse(req.id, { tools: withToolClasses(listed) });
           break;
@@ -688,7 +692,7 @@ export class SlackMcplServer {
           ...(args.latest ? { latest: args.latest as string } : {}),
         });
         return {
-          messages: messages.map((m) => this.renderHistoryMessage(m)),
+          messages: messages.map((m) => this.renderHistoryMessage(m, channelId)),
           ...(truncated ? { note: 'Range holds more messages than the limit; the oldest were omitted.' } : {}),
         };
       }
@@ -702,7 +706,7 @@ export class SlackMcplServer {
           (args.limit as number) ?? 100,
         );
         return {
-          messages: messages.map((m) => this.renderHistoryMessage(m)),
+          messages: messages.map((m) => this.renderHistoryMessage(m, channelId)),
           ...(truncated ? { note: 'Thread holds more messages than the limit; the newest were omitted.' } : {}),
         };
       }
@@ -725,13 +729,24 @@ export class SlackMcplServer {
       case 'fetch_attachment': {
         // The bot token must only be sent to files.slack.com — never to
         // workspace hosts. Enforcement lives in parseSlackAttachmentUrl.
-        const url = parseSlackAttachmentUrl(this.requireString(args, 'url'));
+        let url: URL;
+        if (this.slack.hasExplicitAccessPolicy) {
+          const channelId = this.requireString(args, 'channelId');
+          const fileId = this.requireString(args, 'fileId');
+          // Fresh membership and scope checks precede metadata or byte access.
+          await this.slack.requireReadableConversation(channelId);
+          url = associatedFileUrl(await this.slack.getFileInfo(fileId), channelId);
+        } else {
+          url = parseSlackAttachmentUrl(this.requireString(args, 'url'));
+        }
         const botToken = process.env.SLACK_BOT_TOKEN || '';
         const headers: Record<string, string> = botToken
           ? { Authorization: `Bearer ${botToken}` }
           : {};
         const fileName = decodeURIComponent(url.pathname.split('/').pop() || 'attachment');
-        return toFetchResult(await fetchAttachmentBytes(url.toString(), fileName, { headers }));
+        return toFetchResult(await fetchAttachmentBytes(url.toString(), fileName, {
+          headers, ...(this.slack.hasExplicitAccessPolicy ? { redirect: 'error' as const } : {}),
+        }));
       }
 
       case 'subscribe_channel': {
@@ -795,18 +810,19 @@ export class SlackMcplServer {
 
   private renderHistoryMessage(m: {
     id: string; authorName: string; content: string; threadTs?: string;
-    timestamp: Date; attachments: Array<{ name: string; mimeType?: string; url?: string }>;
-  }): Record<string, unknown> {
+    timestamp: Date; attachments: Array<{ fileId?: string; name: string; mimeType?: string; url?: string }>;
+  }, channelId: string): Record<string, unknown> {
     return {
       id: m.id,
       author: m.authorName,
       timestamp: m.timestamp.toISOString(),
       ...(m.threadTs ? { threadTs: m.threadTs } : {}),
       content: m.content,
+      ...(this.slack.hasExplicitAccessPolicy ? { channelId } : {}),
       ...(m.attachments.length > 0
         ? {
             attachments: m.attachments.map((a) =>
-              `${a.name}${a.mimeType ? ` (${a.mimeType})` : ''}${a.url ? ` — fetchable via fetch_attachment: ${a.url}` : ''}`,
+              `${a.name}${a.mimeType ? ` (${a.mimeType})` : ''}${this.attachmentFetchHint(channelId, a.fileId, a.url)}`,
             ),
           }
         : {}),
@@ -1186,9 +1202,18 @@ export class SlackMcplServer {
   /** Render attachment refs as a text block the agent can act on. Slack
    *  serves url_private behind bot auth, so bytes are fetched on demand via
    *  fetch_attachment rather than inlined here. */
-  private attachmentNote(attachments: AttachmentRef[]): string {
+  private attachmentFetchHint(channelId: string, fileId?: string, url?: string): string {
+    if (this.slack.hasExplicitAccessPolicy) {
+      return fileId
+        ? ` — fetch_attachment(${JSON.stringify({ channelId, fileId })})`
+        : ' — not downloadable: Slack file ID is missing';
+    }
+    return url ? ` — fetchable via fetch_attachment: ${url}` : '';
+  }
+
+  private attachmentNote(attachments: AttachmentRef[], channelId: string): string {
     const lines = attachments.map((a) =>
-      `- ${a.name} (${a.mimeType})${a.isImage ? ' — image' : ''}, fetchable via fetch_attachment: ${a.path}`,
+      `- ${a.name} (${a.mimeType})${a.isImage ? ' — image' : ''}${this.attachmentFetchHint(channelId, a.fileId, a.path)}`,
     );
     return `[attachments: ${attachments.length}]\n${lines.join('\n')}`;
   }
@@ -1322,6 +1347,13 @@ export class SlackMcplServer {
     }
     if (backscroll.length > 0) {
       blocks.push(backscrollBlock(backscroll, { channelName: meta?.name, isDM: msg.isDM }));
+      if (this.slack.hasExplicitAccessPolicy) {
+        for (const message of backscroll) {
+          if (message.attachments.length === 0) continue;
+          const rendered = this.renderHistoryMessage(message, msg.channelId);
+          blocks.push(`[backscroll attachment refs: message=${message.id}]\n${(rendered.attachments as string[]).join('\n')}`);
+        }
+      }
     }
     // Told with the first message the agent gets from here, addressed or not.
     // Counted as told only once the host has taken that message.
@@ -1352,7 +1384,7 @@ export class SlackMcplServer {
 
     const contentBlocks: ContentBlock[] = [textContent(renderedContent)];
     if (msg.attachments.length > 0) {
-      contentBlocks.push(textContent(this.attachmentNote(msg.attachments)));
+      contentBlocks.push(textContent(this.attachmentNote(msg.attachments, msg.channelId)));
     }
 
     // MCPL RFC-001 event tags — reserved chat:* core, umbrellas included.

@@ -44,7 +44,7 @@ export const TOOL_CLASSES: Record<string, readonly ToolClass[]> = {
   fetch_history: ['comms'],
   fetch_thread: ['comms'],
   fetch_attachment: ['comms'],
-  upload_file: ['comms'],
+  upload_file: ['comms', 'files'],
   find_user: ['comms'],
   list_channels: ['comms'],
   // This server's own delivery state.
