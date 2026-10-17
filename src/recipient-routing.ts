@@ -60,8 +60,9 @@ interface Database {
   prepare(sql: string): Statement;
   close(): void;
 }
-const USER = /^[UW][A-Z0-9]{1,63}$/;
+const USER = /^U[A-Z0-9]{1,63}$/;
 const CHANNEL = /^[CGD][A-Z0-9]{1,63}$/;
+// Bound the decimal Slack timestamp text; preserve it exactly, without float conversion.
 const TS = /^\d{1,20}\.\d{1,10}$/;
 
 function ids(value: unknown, pattern: RegExp, name: string, canonical = true): readonly string[] {

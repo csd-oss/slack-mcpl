@@ -174,7 +174,7 @@ durableTest('malformed metadata, missing membership and cross-channel proofs fai
   try {
     for (const changes of [
       { channel: '../CWRITE' }, { channel: ['CWRITE'] }, { id: '' }, { root: 'invalid' },
-      { senderKind: 'owner' }, { authorId: ['UHUMAN'] }, { mentions: ['not-a-user'] },
+      { senderKind: 'owner' }, { authorId: ['UHUMAN'] }, { mentions: ['not-a-user'] }, { mentions: ['WBOT'] },
       { mentions: ['UBOT', 'UBOT'] }, { access: undefined },
       { access: { ...channel().access, channelId: 'COTHER' } },
       { access: { ...channel().access, joined: false } },
@@ -188,9 +188,10 @@ durableTest('malformed metadata, missing membership and cross-channel proofs fai
 durableTest('invalid constructor configuration fails without creating or truncating state', (t) => {
   const { path } = directory(t);
   for (const [user, namespace, config] of [
-    ['not-a-user', 'workspace', policy], ['UBOT', '', policy], ['UBOT', 123, policy],
+    ['not-a-user', 'workspace', policy], ['WBOT', 'workspace', policy], ['UBOT', '', policy], ['UBOT', 123, policy],
     ['UBOT', 'workspace', { ...policy, writeChannels: ['DCHAT'] }],
     ['UBOT', 'workspace', { ...policy, dmUsers: ['bad'] }],
+    ['UBOT', 'workspace', { ...policy, dmUsers: ['WHUMAN'] }],
     ['UBOT', 'workspace', { ...policy, dmUsers: ['UHUMAN', 'UHUMAN'] }],
     ['UBOT', 'workspace', { ...policy, readJoinedChannels: 'true' }],
   ]) assert.throws(() => new RoutingLedger(path, user as string, namespace as string, config as any));
