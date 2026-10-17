@@ -57,7 +57,7 @@ retroactively upgrade existing host behavior.
 
 | Responsibility | Connector | Host/framework bridge |
 |---|---|---|
-| Connection identity | Bind Slack authentication to the configured bot/workspace; refuse mismatch | Bind that connector instance to the configured agent and expected identity |
+| Connection identity | `auth.test` authenticates the bot and supplies team metadata; optional `expectedBotUserId` rejects a receiving-bot mismatch | Bind that connector instance to the configured agent and expected identity; do not infer workspace attestation from state configuration |
 | Access | Verify actual scopes, conversation kind/membership, DM peer and permitted destination before the relevant operation | Validate and snapshot operator policy; prevent another connection or chat message from widening it |
 | Sender provenance | Derive author/bot/unknown classification and mention IDs from authenticated Slack event/API data | Preserve provenance; do not treat a message's text or display name as an identity claim |
 | Addressing | Report the admitted event's own mention or authorized human-DM signal and stable event ID | Validate those signals before scheduling a turn on either delivery lane |
@@ -116,14 +116,17 @@ representation. The bridge validates:
 - an explicit addressed/context-only verdict and reason;
 - the event's immutable reply root, independent of newer arrivals.
 
-The other concrete fields are `channelId`, `replyRoot`, `wakeAllowed`,
+The other concrete fields are `channelId`, `messageId`, `replyRoot`, `wakeAllowed`,
 `mentionIds`, `senderKind`, `isBot`, `authorId`, `authority`, `isDM`,
 `routingReason`, `supportAccess` and, for an addressed human DM,
 `dmAuthorizedPeer`. `supportAccess` binds version, raw conversation ID, readable
 admission and kind, plus joined-channel membership or a verified DM peer. The
-connector separately verifies its configured Slack workspace through its
-authentication/access setup; the bridge does not invent an absent workspace
-field. These local fields are not a standard MCPL schema.
+connector obtains authenticated bot identity and team metadata from `auth.test`.
+It does not implement an expected-team-ID comparison. Optional
+`expectedBotUserId` checks the receiving bot; a routing `namespace` binds the
+operator's local state and is not Slack workspace attestation. Neither the
+namespace nor the bridge invents a verified workspace field. These local fields
+are not a standard MCPL schema.
 
 Missing or inconsistent facts refuse storage/new inference through the bridge.
 A malformed envelope must not be reinterpreted as a legacy addressed message.

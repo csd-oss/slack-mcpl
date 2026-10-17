@@ -82,13 +82,22 @@ changes, and explicit merge-order guidance for companion host work.
    typed bridge with companion host/framework commits. Test both delivery lanes,
    context-only scheduling, frozen prose/status, queues, continuations and retries.
    Make the profile refuse activation when the bridge is absent or incompatible.
-5. **Filesystem path upload proposal, separately.** Do not add it to the inline
-   PR or present a bounded arbitrary-file reader as an approved containment model.
-   The #26 review asks for explicit operator opt-in, a configured readable root,
-   resolved containment including symlink escape prevention, regular-file checks,
-   the same size cap and both `comms` and `files` tool classes. Such an
-   implementation needs its own design, tests, docs and review. Retained historical
-   path code is provenance, not permission to enable it.
+5. **Optional filesystem path uploads, separately.** The local fork proposal
+   preserves the operator-approved behavior: `allowFilePaths: true` (CLI
+   `SLACK_ALLOW_FILE_PATHS=true`) enables bounded reads of regular files through
+   an open file descriptor, with symlinks allowed and no configured-directory
+   containment boundary. Ordinary OS permissions determine what it can read.
+   The default stays inline-only; enabled uploads remain capped at 5 MiB and
+   carry both `comms` and `files` classes. Keep this option out of the inline
+   #26 PR and map its local commit/test evidence separately.
+
+   The #26 reviewer requested a narrower upstream path proposal: explicit
+   operator opt-in to a readable root, resolved containment including symlink
+   escape prevention, regular-file checks, the same size cap and both classes.
+   The missing containment is an **upstream approval blocker for the optional
+   path proposal**, not a claim that this local option implements it. Imposing
+   that new restriction would change the approved deployment behavior and needs
+   its own decision; consolidation must not silently add it.
 
 Pending #15/#29 work may require later composition tests because it changes ack,
 listing, registration or retry paths. Do not claim a clean historical merge-tree
@@ -108,7 +117,7 @@ not label a patch equivalent without verifying the behavioral delta.
 | PENDING | #12 `bdfaab7` | PENDING status/target delta | PENDING pass/fail | Host typing behavior required | PR open |
 | PENDING | Local reusable policy/provenance proposal | PENDING configuration/default changes | PENDING pass/fail | Versioned trusted configuration | New local proposal |
 | PENDING | Local bridge + companion host/framework | PENDING scheduler/target ABI | PENDING both-lane composition counts | See host compatibility record | New local proposal |
-| Excluded | Historical/future filesystem path work | Separate permission and read boundary | Separate test plan | Filesystem access | Separate proposal |
+| PENDING | Local optional path-upload commit | Default inline-only; opt-in bounded regular-file FD reads, symlinks allowed, no directory boundary | PENDING path/type/size/default/class regression counts | Separate from inline #26 | Local fork proposal; upstream containment request unresolved |
 | Excluded | #15 / #20 / #29 pending upstream work | No implicit merge | Future composition runs | Breaking switches / RFC-011 / retry policy | Open at audit |
 
 For each final group, also record exact Node/Bun/package versions, artifact inputs,
@@ -128,6 +137,59 @@ explicit operator defaults and tests. Do not import prompts, conversation/sessio
 stores, memory, credentials, account identities, bridge target registries or
 deployment-specific administrative access. No permanent persona or new external
 identity follows from consolidating source.
+
+## Recommended history and search PR plan
+
+These are proposals for reusable features suggested by historical agent work.
+They are not implemented by this documentation change, part of the current host
+ABI, or authorization to import an agent's history. Use separate small PRs with
+the following boundaries and tests.
+
+1. **Preserve author/thread metadata without additional API calls.** Carry the
+   stable author user ID, message ID, thread root and `replyCount` from fields
+   already present in incoming/history/thread responses. Preserve existing
+   display text alongside structured metadata; do not infer identity from the
+   display name. State whether a root was explicitly reported or derived from
+   that message's own ID, and omit/mark unknown reply counts when Slack did not
+   provide them rather than inventing zero. Test root messages, replies,
+   broadcasts, missing authors/counts and parity across live/history rendering.
+   This group must make no extra user lookup, thread expansion or search calls.
+2. **Bounded filtering over an explicitly authorized conversation read.** Start
+   with documented substring matching and exact author-user-ID filtering, not
+   display-name matching or an unbounded workspace search. Define case/Unicode
+   behavior and ordering. Independently cap `maxScanned`, `matchLimit`, elapsed
+   time, returned bytes and page/API work, so a rare match cannot scan forever.
+   Return scanned/matched counts, a truncation/stop reason and an opaque cursor
+   bound to the conversation and filter. Resume must recheck access and preserve
+   those bounds; a cursor is not an authorization token. Test no-match, dense
+   matches, oversized text, page boundaries, changed/revoked membership and
+   cursor/filter mismatch. Results are tool-read output, not replayed incoming
+   events or wake requests. An optional regex mode should use a deliberately
+   bounded safe engine such as RE2 with pattern/input caps; do not quietly expose
+   unrestricted JavaScript regular expressions.
+3. **Structured write-policy context using existing `writable`.** Expose the
+   existing `writable` result consistently in listing/history tool envelopes so
+   the caller can distinguish readable context from a permitted destination.
+   Reuse the current policy computation and label it as an informational hint;
+   the write path must still perform its fresh scope/membership/destination
+   checks. Do not add a parallel permission store, infer write permission from
+   read success, widen allowed destinations or start a response from this
+   metadata. Test that a read-only result stays read-only after rendering and
+   that stale hints cannot bypass effect-time checks.
+4. **Thread expansion and server-side search as separate proposals.** Expanding
+   roots into replies adds API fan-out; workspace/server search may require a
+   different Slack method, token type, scopes or owner authorization. Determine
+   those requirements from the current official API before proposing a route;
+   do not assume the existing bot credential grants search. Explicitly cap root
+   count, replies per root, total requests, bytes, wall time and continuation
+   state; check access on every conversation and support cancellation. Specify
+   partial results and rate-limit handling without hidden background scans or
+   silent OAuth expansion. Keep this group separate from no-call metadata and
+   local bounded filtering so each can be reviewed independently.
+
+Each proposed PR needs a baseline/candidate numerical test record and an explicit
+statement of Slack/host behavior not verified live. None adds message sends,
+new credentials, automatic thread crawling or a new external identity.
 
 ## Handoff boundaries
 
