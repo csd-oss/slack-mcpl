@@ -18,6 +18,7 @@ function fixture(t: {after(fn: () => unknown): void}) {
   const posts: any[] = [], statuses: any[] = [], reactions: any[] = [];
   const socket = {on(_event: string, handler: any) {listener = handler;}, async start() {}, async disconnect() {}};
   let member = true;
+  let parentThread: string | undefined;
   const web = {
     conversations: {
       async list() { return {channels: ['CWRITE', 'CREAD'].map(id => ({id, name: id, is_member: member,
@@ -26,7 +27,7 @@ function fixture(t: {after(fn: () => unknown): void}) {
         is_im: channel.startsWith('D'), is_mpim: false, is_private: false, user: 'UOWNER'}};},
       async open() {return {channel: {id: 'DPEER'}};},
       async history() {return {messages: []};},
-      async replies({ts}: any) {return {messages: [{ts, user: 'UOWNER', text: 'root'}]};},
+      async replies({ts}: any) {return {messages: [{ts, thread_ts: parentThread ?? ts, user: 'UOWNER', text: 'root'}]};},
     },
     chat: {async postMessage(args: any) {posts.push(args); return {ts: '999.1'};}, async update() {}, async delete() {}},
     reactions: {async add(args: any) {reactions.push(args);}, async remove() {}},
@@ -42,6 +43,7 @@ function fixture(t: {after(fn: () => unknown): void}) {
   t.after(async () => {await host.close(); await slack.stop();});
   return {...host, slack, posts, statuses, reactions,
     revoke() {member = false;},
+    useChildAsParent() {parentThread = '50.1';},
     async emit(patch: Record<string, unknown> = {}) {
       await listener({event: {type: 'message', channel: 'CWRITE', user: 'UOWNER', ts: '100.2',
         text: '<@USELF> hello', ...patch}, ack: async () => {}});
@@ -134,4 +136,18 @@ advanced('disabled tools are hidden and direct invocation is denied; settings sn
   assert.equal(result.isError, true);
   assert.throws(() => h.slack.configureRecipientRouting({stateFile: '/irrelevant/db', namespace: 'other'}));
   assert.throws(() => new SlackMcplServer(h.slack, {disabledTools: ['misspelled']}));
+});
+
+advanced('Slack-shaped equal-root parents are accepted but a child cannot be used as the frozen root', async t => {
+  const h = fixture(t); await ready(h);
+  const publish = () => h.host.sendRequest(method.CHANNELS_PUBLISH, {channelId: 'slack:CWRITE', threadId: '100.1',
+    content: [{type: 'text', text: 'answer'}]}) as Promise<any>;
+  assert.equal((await publish()).delivered, true);
+  h.useChildAsParent();
+  assert.equal((await publish()).delivered, false);
+  h.host.sendNotification(method.CHANNELS_TYPING, {channelId: 'slack:CWRITE', op: 'start',
+    metadata: {supportRecipientReplyRoot: '100.1'}});
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(h.statuses.length, 0);
+  assert.equal(h.posts.length, 1);
 });
