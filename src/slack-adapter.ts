@@ -22,7 +22,7 @@
 
 import { WebClient } from '@slack/web-api';
 import { SocketModeClient } from '@slack/socket-mode';
-import { SlackAccessPolicy, type SlackAccessPolicyConfig } from './access-policy.js';
+import { SlackAccessPolicy, HISTORY_MEMBERSHIP_PROOF, type SlackAccessPolicyConfig } from './access-policy.js';
 import {
   formatSlackText,
   extractSlackUserIds,
@@ -200,7 +200,7 @@ export interface SlackWebLike {
     list(args: Record<string, unknown>): Promise<{ channels?: unknown[]; response_metadata?: { next_cursor?: string; scopes?: string[] } }>;
     info(args: { channel: string }): Promise<{ channel?: unknown }>;
     open(args: { users: string }): Promise<{ channel?: { id?: string } }>;
-    history(args: Record<string, unknown>): Promise<{ messages?: unknown[]; response_metadata?: { next_cursor?: string } }>;
+    history(args: Record<string, unknown>): Promise<{ ok?: boolean; messages?: unknown[]; response_metadata?: { next_cursor?: string } }>;
     replies(args: Record<string, unknown>): Promise<{ messages?: unknown[]; response_metadata?: { next_cursor?: string } }>;
   };
   chat: {
@@ -334,6 +334,11 @@ export class SlackAdapter {
    *  the bot is NOT a member of (no events, no posting without joining) — those
    *  are excluded here; list_channels with includeNonMember surfaces them. */
   async listConversations(includeNonMember = false): Promise<SlackConversationInfo[]> {
+    const out: SlackConversationInfo[] = [];
+    for (const id of this.accessPolicy?.historyMembershipFallbacks(this.scopes) ?? []) {
+      const info = await this.describeConversation(await this.readAccessConversation(id));
+      if (info) out.push(info);
+    }
     // Slack refuses the whole call when one type lacks its read scope.
     // Keep the type set stable across pagination; refreshed scopes apply to
     // the next listing rather than changing the meaning of an existing cursor.
@@ -342,8 +347,7 @@ export class SlackAdapter {
       .join(',');
     // An empty types value has undocumented behavior; do not rely on Slack's
     // default public_channel listing when no readable type is available.
-    if (!types) return [];
-    const out: SlackConversationInfo[] = [];
+    if (!types) return out;
     let cursor: string | undefined;
     do {
       const result = await this.web.conversations.list({
@@ -357,6 +361,7 @@ export class SlackAdapter {
         this.scopes = [...scopes];
       }
       for (let raw of (result.channels ?? []) as SlackApiConversation[]) {
+        if (out.some((info) => info.id === raw.id)) continue;
         if (this.accessPolicy) {
           if (!raw.id) continue;
           try { raw = await this.readAccessConversation(raw.id); } catch { continue; }
@@ -381,6 +386,19 @@ export class SlackAdapter {
     if (!this.accessPolicy) throw new Error('Slack access policy is not configured');
     if (!/^[CGD][A-Z0-9]+$/.test(channelId)) throw new Error('Invalid Slack conversation ID');
     if (!Array.isArray(this.scopes)) throw new Error('Slack scope metadata is unavailable');
+    if (this.accessPolicy.usesHistoryMembershipFallback(channelId, this.scopes)) {
+      this.accessPolicy.requireScope(this.scopes, 'channels:history');
+      // Bot tokens can read history only for conversations they belong to.
+      // Never cache this proof or add channels:read to reported token scopes.
+      const result = await this.web.conversations.history({ channel: channelId, limit: 1 });
+      if (result.ok !== true) throw new Error(`Could not freshly confirm membership of ${channelId}`);
+      const conversation: SlackApiConversation & { [HISTORY_MEMBERSHIP_PROOF]: true } = {
+        id: channelId, name: channelId, is_im: false, is_mpim: false,
+        is_private: false, is_member: true, [HISTORY_MEMBERSHIP_PROOF]: true,
+      };
+      this.accessPolicy.requireReadable(channelId, conversation, this.scopes);
+      return conversation;
+    }
     const result = await this.web.conversations.info({ channel: channelId });
     const conversation = result.channel as SlackApiConversation | undefined;
     this.accessPolicy.requireReadable(channelId, conversation, this.scopes);

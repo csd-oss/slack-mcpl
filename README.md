@@ -119,6 +119,15 @@ metadata discovery with `users:read`; it does not grant message access. Legacy
 write allowlists still apply as an additional restriction. Without an explicit
 policy, existing flags and behavior are unchanged.
 
+An optional `historyMembershipFallbackChannels` list names exact write destinations
+that the operator has independently verified are public. If `channels:read` is
+absent, each operation proves fresh membership with a successful bot-token
+`conversations.history({ channel, limit: 1 })` call. A `C` prefix or history success
+cannot establish public visibility. Fallback never caches membership, invents
+scopes, or applies to unconfigured channels, DMs or private-channel metadata;
+normal metadata checks remain when `channels:read` is present. Refusals, rate
+limits and unknown scopes fail closed.
+
 With this profile, `fetch_attachment` requires `channelId` and `fileId` rather
 than trusting a supplied URL. It checks fresh readable membership, requires
 `files:read`, verifies that `files.info` associates the exact file with that

@@ -4,9 +4,17 @@ export interface SlackAccessPolicyConfig {
   writeChannels: string[];
   dmUsers: string[];
   readJoinedChannels: boolean;
+  /** Exact write destinations the operator has verified are public. History
+   * proves fresh bot membership only when channels:read is unavailable; a C
+   * prefix or successful history request cannot establish public visibility. */
+  historyMembershipFallbackChannels?: string[];
 }
 
+/** In-process proof only: JSON, message text and Slack metadata cannot mint it. */
+export const HISTORY_MEMBERSHIP_PROOF: unique symbol = Symbol('Slack bot history membership');
+
 export interface AccessConversation {
+  [HISTORY_MEMBERSHIP_PROOF]?: true;
   id?: string;
   user?: string;
   is_im?: boolean;
@@ -19,6 +27,7 @@ export class SlackAccessPolicy {
   private readonly writeChannels: ReadonlySet<string>;
   private readonly dmUsers: ReadonlySet<string>;
   private readonly readJoinedChannels: boolean;
+  private readonly historyFallbackChannels: ReadonlySet<string>;
 
   constructor(config: SlackAccessPolicyConfig) {
     if (!Array.isArray(config.writeChannels) || !config.writeChannels.every((id) => typeof id === 'string' && /^[CG][A-Z0-9]+$/.test(id))
@@ -27,6 +36,19 @@ export class SlackAccessPolicy {
     this.writeChannels = new Set(config.writeChannels);
     this.dmUsers = new Set(config.dmUsers);
     this.readJoinedChannels = config.readJoinedChannels;
+    const fallback = config.historyMembershipFallbackChannels ?? [];
+    if (!Array.isArray(fallback) || !fallback.every((id) => typeof id === 'string'
+        && /^C[A-Z0-9]+$/.test(id) && this.writeChannels.has(id))) throw new Error('History membership fallback must name pinned public write channels');
+    this.historyFallbackChannels = new Set(fallback);
+  }
+
+  historyMembershipFallbacks(scopes: readonly string[] | undefined): string[] {
+    if (!Array.isArray(scopes) || scopes.includes('channels:read') || !this.readJoinedChannels) return [];
+    return [...this.historyFallbackChannels];
+  }
+
+  usesHistoryMembershipFallback(channelId: string, scopes: readonly string[] | undefined): boolean {
+    return this.historyMembershipFallbacks(scopes).includes(channelId);
   }
 
   get dmsWritable(): boolean { return this.dmUsers.size > 0; }
@@ -60,7 +82,10 @@ export class SlackAccessPolicy {
         || !/^[CG][A-Z0-9]+$/.test(channelId) || conversation.is_member !== true || !this.readJoinedChannels) {
       throw new Error(`Conversation ${channelId} is not a confirmed joined channel`);
     }
-    this.requireScope(scopes, conversation.is_private ? 'groups:read' : 'channels:read');
+    if (conversation.is_private === false && conversation[HISTORY_MEMBERSHIP_PROOF] === true
+        && this.usesHistoryMembershipFallback(channelId, scopes)) {
+      this.requireScope(scopes, 'channels:history');
+    } else this.requireScope(scopes, conversation.is_private ? 'groups:read' : 'channels:read');
     return conversation.is_private ? 'private_channel' : 'channel';
   }
 
