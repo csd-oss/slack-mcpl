@@ -44,7 +44,7 @@ export const TOOL_CLASSES: Record<string, readonly ToolClass[]> = {
   fetch_history: ['comms'],
   fetch_thread: ['comms'],
   fetch_attachment: ['comms'],
-  upload_file: ['comms', 'files'],
+  upload_file: ['comms'],
   find_user: ['comms'],
   list_channels: ['comms'],
   // This server's own delivery state.
@@ -61,9 +61,11 @@ export const UNCLASSED: ReadonlySet<string> = new Set<string>();
  *  keys. Unclassed tools are returned as they are. */
 export function withToolClasses<T extends { name: string; _meta?: Record<string, unknown> }>(
   tools: readonly T[],
+  opts: { allowFilePaths?: boolean } = {},
 ): T[] {
   return tools.map((tool) => {
     if (!Object.hasOwn(TOOL_CLASSES, tool.name)) return tool;
-    return { ...tool, _meta: { ...tool._meta, 'mcpl/class': [...TOOL_CLASSES[tool.name]] } };
+    const classes = tool.name === 'upload_file' && opts.allowFilePaths ? ['comms', 'files'] : TOOL_CLASSES[tool.name];
+    return { ...tool, _meta: { ...tool._meta, 'mcpl/class': [...classes] } };
   });
 }

@@ -77,7 +77,14 @@ with padding where required, and no whitespace or data-URI prefix). The
 content must be nonempty. This server limits inline content to 5 MiB
 (5,242,880 bytes), measured after UTF-8 encoding or base64 decoding; this is
 the server's inline limit, not Slack's file-size limit. The tool accepts
-inline content only; it does not read a path on the server.
+inline content only by default. Embedded callers may explicitly set
+`new SlackMcplServer(adapter, { allowFilePaths: true })` to add a `path` option.
+It reads an absolute regular-file path through one nonblocking descriptor,
+checks the 5 MiB cap before and during the read, and gives bounded bytes to the
+Slack SDK. Symlinks are allowed; ordinary OS permissions apply and no directory
+boundary or sandbox is provided. In path mode, `filename` defaults to the
+path basename. With the option unset or false, `path` is neither advertised nor
+accepted. Inline validation and limits stay the same in either mode.
 
 Optional `messageId` selects the thread root (the message's `thread=` value,
 or its `id=` when it has no `thread=`). `title` names the
@@ -134,7 +141,8 @@ than trusting a supplied URL. It checks fresh readable membership, requires
 conversation, and downloads only Slack's canonical private URL with redirects
 refused. Live messages, history, threads and backscroll provide these IDs;
 missing file IDs are marked unavailable. Without the profile, URL-only fetches
-remain compatible. File uploads require both the `comms` and `files` MCPL classes.
+remain compatible. Inline uploads carry the `comms` MCPL class. Explicitly enabling local path
+uploads adds the `files` class to `upload_file`.
 
 ## Reply to a specific thread
 

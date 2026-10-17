@@ -251,3 +251,22 @@ export const toolDefinitions: ToolDefinition[] = [
     },
   },
 ];
+
+
+/** Path mode is explicit: inline-only tool definitions remain the default. */
+export function toolDefinitionsForFilePaths(allowFilePaths = false): ToolDefinition[] {
+  if (!allowFilePaths) return toolDefinitions;
+  return toolDefinitions.map((tool) => tool.name !== 'upload_file' ? tool : {
+    ...tool,
+    description: 'Upload a file to a Slack conversation. Pass exactly one of path (an absolute regular-file path), content (text), or contentBase64 (canonical base64). All modes are limited to 5 MiB. Local paths use ordinary OS permissions, allow symlinks, and have no directory boundary. Same write rules as send_message.',
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        ...tool.inputSchema.properties,
+        path: { type: 'string', description: 'Absolute path to a regular file on this host, max 5 MiB; symlinks are allowed and no directory boundary is enforced' },
+        filename: { type: 'string', description: 'File name shown in Slack; required for inline content, defaults to the path basename for path uploads' },
+      },
+      required: ['channelId'],
+    },
+  });
+}
