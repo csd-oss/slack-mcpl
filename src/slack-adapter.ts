@@ -210,6 +210,10 @@ export interface SlackWebLike {
   assistant?: {
     threads: { setStatus(args: { channel_id: string; thread_ts: string; status: string }): Promise<unknown> };
   };
+  filesUploadV2?(args: Record<string, unknown>): Promise<{ files?: Array<{ files?: Array<{ id?: string }> }> }>;
+  files?: {
+    delete(args: { file: string }): Promise<unknown>;
+  };
   users: {
     info(args: { user: string }): Promise<{ user?: { profile?: { display_name?: string }; real_name?: string; name?: string } }>;
     list(args: { limit?: number; cursor?: string }): Promise<{ members?: unknown[]; response_metadata?: { next_cursor?: string } }>;
@@ -502,6 +506,31 @@ export class SlackAdapter {
     return { messageId: result.ts ? String(result.ts) : '' };
   }
 
+  /** Upload a file (files.getUploadURLExternal + completeUploadExternal).
+   *  Same write checks as sendMessage. Needs the files:write scope. */
+  async uploadFile(
+    channelId: string,
+    file: { filename: string; data: Buffer; title?: string; comment?: string; threadTs?: string },
+  ): Promise<{ fileId: string }> {
+    this.assertWritable(channelId);
+    await this.assertNotDm(channelId);
+    if (!this.web.filesUploadV2) throw new Error('File upload is not available');
+    const result = await this.web.filesUploadV2({
+      channel_id: channelId,
+      file: file.data,
+      filename: file.filename,
+      title: file.title ?? file.filename,
+      ...(file.comment ? { initial_comment: file.comment } : {}),
+      ...(file.threadTs ? { thread_ts: file.threadTs } : {}),
+    });
+    const fileId = result.files?.[0]?.files?.[0]?.id;
+    if (typeof fileId !== 'string' || !fileId.trim()) {
+      throw new Error("Slack's upload response named no file with a valid ID; the upload could not be confirmed");
+    }
+    void this.clearAck(channelId);
+    return { fileId };
+  }
+
   /** With SLACK_DISABLE_DMS, only a conversation Slack confirmed to be a
    *  channel may be written to or read. Every write path and both history
    *  reads call this. An ID is not enough: a group DM ID looks like a channel
@@ -544,6 +573,14 @@ export class SlackAdapter {
     this.assertWritable(channelId);
     await this.assertNotDm(channelId);
     await this.web.chat.delete({ channel: channelId, ts });
+  }
+
+  /** Remove a file uploaded by this bot, retaining its destination write guards. */
+  async deleteUploadedFile(channelId: string, fileId: string): Promise<void> {
+    this.assertWritable(channelId);
+    await this.assertNotDm(channelId);
+    if (!this.web.files) throw new Error('File deletion is not available');
+    await this.web.files.delete({ file: fileId });
   }
 
   async addReaction(channelId: string, ts: string, emoji: string): Promise<void> {

@@ -43,7 +43,7 @@ function fakeSocket(): FakeSocket {
   };
 }
 
-function fakeWeb(posts: unknown[], reactions: string[], statuses: string[]): SlackWebLike {
+function fakeWeb(posts: unknown[], reactions: string[], statuses: string[], uploads: unknown[], deletedMessages: unknown[], deletedFiles: string[]): SlackWebLike {
   return {
     assistant: {
       threads: {
@@ -78,7 +78,8 @@ function fakeWeb(posts: unknown[], reactions: string[], statuses: string[]): Sla
       async update() {
         return {};
       },
-      async delete() {
+      async delete(args) {
+        deletedMessages.push(args);
         return {};
       },
     },
@@ -89,6 +90,16 @@ function fakeWeb(posts: unknown[], reactions: string[], statuses: string[]): Sla
       },
       async remove({ channel, timestamp, name }) {
         reactions.push(`remove:${channel}:${timestamp}:${name}`);
+        return {};
+      },
+    },
+    async filesUploadV2(args) {
+      uploads.push(args);
+      return { files: [{ files: [{ id: `F${uploads.length}` }] }] };
+    },
+    files: {
+      async delete({ file }: { file: string }) {
+        deletedFiles.push(file);
         return {};
       },
     },
@@ -123,6 +134,9 @@ export interface Harness {
   reactions: string[];
   /** assistant.threads.setStatus calls, as `<channel>:<thread_ts>:<status>`. */
   statuses: string[];
+  uploads: unknown[];
+  deletedMessages: unknown[];
+  deletedFiles: string[];
   served: Promise<void>;
   close(): Promise<void>;
 }
@@ -133,11 +147,14 @@ export function fakeSlack(opts: HarnessOptions = {}) {
   const posts: unknown[] = [];
   const reactions: string[] = [];
   const statuses: string[] = [];
+  const uploads: unknown[] = [];
+  const deletedMessages: unknown[] = [];
+  const deletedFiles: string[] = [];
   const slack = new SlackAdapter(
-    fakeWeb(posts, reactions, statuses), socket, 'UBOT', 'acme',
+    fakeWeb(posts, reactions, statuses, uploads, deletedMessages, deletedFiles), socket, 'UBOT', 'acme',
     undefined, opts.sendChannels, opts.disableDms, opts.ackReaction,
   );
-  return { slack, socket, posts, reactions, statuses };
+  return { slack, socket, posts, reactions, statuses, uploads, deletedMessages, deletedFiles };
 }
 
 /** Answer the server's requests on `host` as an MCPL host would; returns the
@@ -189,10 +206,10 @@ export function connectHost(server: SlackMcplServer, opts: HarnessOptions = {}) 
 }
 
 export function harness(opts: HarnessOptions = {}): Harness {
-  const { slack, socket, posts, reactions, statuses } = fakeSlack(opts);
+  const { slack, socket, posts, reactions, statuses, uploads, deletedMessages, deletedFiles } = fakeSlack(opts);
   const server = new SlackMcplServer(slack, { subscribeMemberChannels: opts.subscribeMemberChannels });
   const { host, hostSaw, served, close } = connectHost(server, opts);
-  return { server, socket, host, hostSaw, posts, reactions, statuses, served, close };
+  return { server, socket, host, hostSaw, posts, reactions, statuses, uploads, deletedMessages, deletedFiles, served, close };
 }
 
 export async function initialize(h: { host: McplConnection }, mcpl: boolean) {
