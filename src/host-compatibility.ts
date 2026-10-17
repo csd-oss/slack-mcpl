@@ -92,9 +92,11 @@ export function createRecipientHostBridge(config: {
   return Object.freeze({
     initializeCapability: recipientCapability(ownUserId),
     accept(lane: IngressLane, metadata: Record<string, unknown>): RecipientDecision {
-      if (!['channels/incoming', 'push/event'].includes(lane) || metadata.serverId !== serverId
+      if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)
+          || !['channels/incoming', 'push/event'].includes(lane) || metadata.serverId !== serverId
           || metadata.botUserId !== ownUserId || metadata.routingVersion !== 1
           || typeof metadata.channelId !== 'string' || typeof metadata.replyRoot !== 'string'
+          || typeof metadata.messageId !== 'string' || !STAMP.test(metadata.messageId)
           || !STAMP.test(metadata.replyRoot) || typeof metadata.wakeAllowed !== 'boolean'
           || !Array.isArray(metadata.mentionIds) || !metadata.mentionIds.every(id => typeof id === 'string' && USER.test(id))) return refuse;
       const channelId = metadata.channelId.replace(/^slack:/, '');

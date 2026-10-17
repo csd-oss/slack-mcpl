@@ -23,6 +23,8 @@
 import { WebClient } from '@slack/web-api';
 import { SocketModeClient } from '@slack/socket-mode';
 import { SlackAccessPolicy, HISTORY_MEMBERSHIP_PROOF, type SlackAccessPolicyConfig } from './access-policy.js';
+import {RoutingLedger, type AccessAdmission, type RoutingReceipt, type SenderKind} from './recipient-routing.js';
+import type {RecipientRoutingConfig} from './configuration.js';
 import {
   formatSlackText,
   extractSlackUserIds,
@@ -116,6 +118,10 @@ export interface SlackMessageData {
   threadTs?: string;
   authorId: string;
   authorName: string;
+  isBot?: boolean;
+  senderKind?: SenderKind;
+  authorBotId?: string;
+  routing?: RoutingReceipt;
   /** Raw mrkdwn text as received. */
   content: string;
   /** Mentions resolved to @name (uid:U…), links/broadcasts unescaped. */
@@ -151,6 +157,7 @@ export interface SlackUserMatch {
 export interface SlackAdapterConfig {
   /** Opt-in deployment policy. Unset preserves the legacy operator controls. */
   accessPolicy?: SlackAccessPolicyConfig;
+  recipientRouting?: RecipientRoutingConfig;
   botToken: string;
   appToken: string;
   /** When set, DMs from anyone not in this user-ID list are dropped. */
@@ -191,6 +198,7 @@ export async function connectSlack(config: SlackAdapterConfig): Promise<SlackAda
     (auth.response_metadata as { scopes?: string[] } | undefined)?.scopes,
   );
   if (config.accessPolicy) adapter.configureAccessPolicy(config.accessPolicy);
+  if (config.recipientRouting) adapter.configureRecipientRouting(config.recipientRouting);
   return adapter;
 }
 
@@ -222,7 +230,7 @@ export interface SlackWebLike {
     info?(args: { file: string }): Promise<{ file?: Record<string, unknown> }>;
   };
   users: {
-    info(args: { user: string }): Promise<{ user?: { profile?: { display_name?: string }; real_name?: string; name?: string } }>;
+    info(args: { user: string }): Promise<{ user?: { is_bot?: boolean; profile?: { display_name?: string }; real_name?: string; name?: string } }>;
     list(args: { limit?: number; cursor?: string }): Promise<{ members?: unknown[]; response_metadata?: { next_cursor?: string } }>;
   };
 }
@@ -234,6 +242,11 @@ export interface SlackSocketLike {
 }
 
 export class SlackAdapter {
+  private routingLedger?: RoutingLedger;
+  get routing(): RoutingLedger | undefined { return this.routingLedger; }
+  private accessConfig?: SlackAccessPolicyConfig;
+  private botUsers = new Set<string>();
+  private humanUsers = new Set<string>();
   private accessPolicy?: SlackAccessPolicy;
   /** Lets file helpers select strict association checks without exposing policy. */
   get hasExplicitAccessPolicy(): boolean { return this.accessPolicy !== undefined; }
@@ -299,6 +312,18 @@ export class SlackAdapter {
   configureAccessPolicy(config: SlackAccessPolicyConfig): void {
     if (this.socketStarted || this.accessPolicy) throw new Error('Slack access policy must be configured once before start');
     this.accessPolicy = new SlackAccessPolicy(config);
+    this.accessConfig = {readJoinedChannels: config.readJoinedChannels,
+      writeChannels: [...config.writeChannels], dmUsers: [...config.dmUsers]};
+  }
+
+  /** Install once after Slack authentication and explicit policy, before start.
+   * Each agent supplies its own private state file and installation namespace. */
+  configureRecipientRouting(config: RecipientRoutingConfig): void {
+    if (this.socketStarted || this.routingLedger || !this.accessConfig || !this.botUserId)
+      throw new Error('Recipient routing requires authenticated identity and explicit access policy before start');
+    if (config.expectedBotUserId !== undefined && config.expectedBotUserId !== this.botUserId)
+      throw new Error('Authenticated Slack recipient identity differs from configuration');
+    this.routingLedger = new RoutingLedger(config.stateFile, this.botUserId, config.namespace, this.accessConfig);
   }
 
   /** Open the Socket Mode connection. Resolves once connected. */
@@ -317,6 +342,7 @@ export class SlackAdapter {
       await this.socket.disconnect().catch(() => {});
       this.socketStarted = false;
     }
+    this.routingLedger?.close();
   }
 
   // ── Conversations ──
@@ -508,6 +534,20 @@ export class SlackAdapter {
 
   /** Per conversation, the thread showing our status and when it was set. */
   private statusOn = new Map<string, { ts: string; at: number }>();
+  private recipientStatusOperations = new Map<string, Promise<void>>();
+
+  /** Optional frozen-target status path. A delayed stop for one turn must not
+   * clear another turn's thread status. Legacy status behavior is unchanged. */
+  async setRecipientThreadStatus(channelId: string, root: string, stop: boolean): Promise<void> {
+    const previous = this.recipientStatusOperations.get(channelId) ?? Promise.resolve();
+    const operation = previous.then(async () => {
+      if (!stop) await this.setThreadStatus(channelId, root);
+      else if (this.statusOn.get(channelId)?.ts === root) await this.setThreadStatus(channelId, undefined);
+    });
+    this.recipientStatusOperations.set(channelId, operation);
+    try { await operation; }
+    finally { if (this.recipientStatusOperations.get(channelId) === operation) this.recipientStatusOperations.delete(channelId); }
+  }
 
   /** Show "is thinking…" on thread `threadTs` of `channelId`, or clear the
    *  conversation's status when `threadTs` is undefined. Moving to another
@@ -808,22 +848,27 @@ export class SlackAdapter {
 
   private async handleMessageEvent(event: SlackMessageEvent): Promise<void> {
     if (!event || event.type !== 'message') return;
-    if (!CONTENT_SUBTYPES.has(event.subtype)) return;
+    if (!CONTENT_SUBTYPES.has(event.subtype) && !(this.routing && event.subtype === 'bot_message')) return;
     // Self-filter: skip our own messages and other bots' (bot_id covers
     // bot_message-without-subtype edge cases like app-posted file shares).
-    if (event.bot_id) return;
+    if (event.bot_id && !this.routing) return;
     if (this.botUserId !== null && event.user === this.botUserId) return;
     // A real user content message always carries channel, user, and ts;
     // a malformed payload missing any of them is dropped, not crashed on
     // (parseFloat(undefined) → NaN → toISOString() throws).
     if (!event.channel || !event.user || !event.ts) return;
 
+    let supportAccess: AccessAdmission | undefined;
     if (this.accessPolicy) {
+      // Fresh admission precedes dedup and any wake decision.
       const conversation = await this.requireHistoryConversation(event.channel);
       if (conversation?.is_im && conversation.user !== event.user) return;
+      supportAccess = {version: 1, channelId: event.channel, readable: true,
+        kind: conversation!.is_im ? 'dm' : conversation!.is_private ? 'private_channel' : 'channel',
+        ...(conversation!.is_im ? {dmPeer: conversation!.user} : {joined: true as const})};
     }
 
-    const isDM = event.channel_type === 'im' || event.channel.startsWith('D');
+    const isDM = supportAccess ? supportAccess.kind === 'dm' : event.channel_type === 'im' || event.channel.startsWith('D');
     // Only what Slack marks as a channel gets through, not merely what isn't marked a DM.
     if (!this.accessPolicy && this.disableDms && event.channel_type !== 'channel' && event.channel_type !== 'group') return;
     if (!this.accessPolicy && isDM && this.dmUsers && this.dmUsers.length > 0 && !this.dmUsers.includes(event.user)) {
@@ -834,6 +879,13 @@ export class SlackAdapter {
     const mentionIds = extractSlackUserIds(event.text ?? '');
     await this.resolveUserNames([event.user, ...mentionIds]);
     const authorName = this.userNameCache.get(event.user) ?? event.user;
+    const senderKind: SenderKind = event.bot_id || event.subtype === 'bot_message' || this.botUsers.has(event.user)
+      ? 'bot' : this.humanUsers.has(event.user) || !this.routing ? 'human' : 'unknown';
+    const routing = this.routing?.receive({channel: event.channel, id: event.ts,
+      root: event.thread_ts || event.root?.thread_ts || event.ts, senderKind, authorId: event.user,
+      mentions: mentionIds, access: supportAccess!,
+      ...(supportAccess?.kind === 'dm' && senderKind === 'human' ? {dmAuthorizedPeer: event.user} : {})});
+    if (this.routing && routing === null) return;
 
     const attachments: AttachmentRef[] = (event.files ?? [])
       .filter((f) => this.hasExplicitAccessPolicy || !!f.url_private)
@@ -855,6 +907,8 @@ export class SlackAdapter {
       threadTs: event.thread_ts || event.root?.thread_ts || undefined,
       authorId: String(event.user),
       authorName,
+      ...(routing ? {routing, isBot: senderKind !== 'human', senderKind,
+        ...(event.bot_id ? {authorBotId: event.bot_id} : {})} : {}),
       content: event.text ?? '',
       cleanContent: formatSlackText(event.text ?? '', this.userNameCache),
       mentionIds,
@@ -874,7 +928,12 @@ export class SlackAdapter {
   /** Resolve user IDs into this adapter's cache (shared logic in content.ts). */
   private async resolveUserNames(userIds: Array<string | undefined>): Promise<void> {
     await resolveSlackUserNames(
-      this.web,
+      {users: {info: async (args) => {
+        const info = await this.web.users.info(args);
+        if (info.user?.is_bot === true) this.botUsers.add(args.user);
+        if (info.user?.is_bot === false) this.humanUsers.add(args.user);
+        return info;
+      }}},
       this.userNameCache,
       userIds.filter((id): id is string => !!id),
     );

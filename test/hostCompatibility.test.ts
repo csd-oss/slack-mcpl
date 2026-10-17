@@ -7,7 +7,7 @@ import {
 
 const policy = {readJoinedChannels: true, writeChannels: ['CWRITE'], dmUsers: ['UOWNER']};
 function metadata(patch: Record<string, unknown> = {}) {
-  return {serverId: 'chat-connector', channelId: 'slack:CWRITE', botUserId: 'USELF', routingVersion: 1,
+  return {serverId: 'chat-connector', channelId: 'slack:CWRITE', messageId: '100.2', botUserId: 'USELF', routingVersion: 1,
     wakeAllowed: true, replyRoot: '100.1', mentionIds: ['USELF'], senderKind: 'human', isBot: false,
     authorId: 'UPERSON', authority: 'human-source', isDM: false, routingReason: 'human-mention',
     supportAccess: {version: 1, channelId: 'CWRITE', kind: 'channel', readable: true, joined: true}, ...patch};
@@ -42,12 +42,13 @@ for (const lane of ['channels/incoming', 'push/event'] as const) {
       {serverId: 'other'}, {botUserId: 'UOTHER'}, {routingVersion: 2}, {supportAccess: undefined},
       {supportAccess: {version: 1, channelId: 'COTHER', readable: true, kind: 'channel', joined: true}},
       {supportAccess: {version: 1, channelId: 'CWRITE', readable: true, kind: 'channel', joined: false}},
-      {replyRoot: 'bad'}, {authorId: 'USELF'}, {authorId: undefined}, {isBot: true},
+      {replyRoot: 'bad'}, {messageId: undefined}, {authorId: 'USELF'}, {authorId: undefined}, {isBot: true},
       {senderKind: 'owner'}, {authority: 'owner'}, {wakeAllowed: false}, {mentionIds: []},
       {isDM: true}, {routingReason: 'context-only'},
     ];
     for (const patch of patches) assert.deepEqual(host.accept(lane, metadata(patch)),
       {store: false, triggerInference: false}, JSON.stringify(patch));
+    assert.deepEqual(host.accept(lane, null as any), {store: false, triggerInference: false});
   });
 
   test(`${lane}: human DM address is a verified counterpart signal, not a synthetic mention`, () => {
@@ -55,6 +56,10 @@ for (const lane of ['channels/incoming', 'push/event'] as const) {
       dmAuthorizedPeer: 'UOWNER', routingReason: 'authorized-human-dm',
       supportAccess: {version: 1, channelId: 'DPEER', kind: 'dm', readable: true, dmPeer: 'UOWNER'}});
     assert.equal(bridge().accept(lane, dm).triggerInference, true);
+    // Read admission is identity-based. Only a verified human counterpart
+    // supplies an independent DM wake signal; a bot peer can be context only.
+    assert.deepEqual(bridge().accept(lane, {...dm, senderKind: 'bot', isBot: true, authority: 'peer-not-owner',
+      wakeAllowed: false, routingReason: 'context-only', dmAuthorizedPeer: undefined}), {store: true, triggerInference: false});
     for (const patch of [{authorId: 'UOTHER'}, {dmAuthorizedPeer: 'UOTHER'}, {senderKind: 'bot', isBot: true},
       {supportAccess: {...dm.supportAccess, dmPeer: 'UOTHER'}}]) {
       assert.equal(bridge().accept(lane, {...dm, ...patch}).triggerInference, false);
@@ -68,6 +73,9 @@ test('host bridge snapshots policy and does not widen after caller mutation', ()
   mutable.readJoinedChannels = true;
   mutable.dmUsers.push('UOWNER');
   assert.equal(host.accept('push/event', metadata()).store, false);
+  assert.equal(host.accept('push/event', metadata({channelId: 'DPEER', isDM: true, mentionIds: [],
+    authorId: 'UOWNER', dmAuthorizedPeer: 'UOWNER', routingReason: 'authorized-human-dm',
+    supportAccess: {version: 1, channelId: 'DPEER', kind: 'dm', readable: true, dmPeer: 'UOWNER'}})).store, false);
 });
 
 test('example host lifecycle keeps a frozen turn target through tools, queues, retries and budget restarts', () => {
