@@ -235,18 +235,19 @@ unverified.
 
 ## Implementation record
 
-The consolidation owner fills this record from the final code and test evidence;
-an empty field is not an implicit compatibility claim.
+This record distinguishes completed connector/example tests from unperformed
+real-host migration. It is not a declaration that a stock framework is ready.
 
 | Item | Exact value / evidence |
 |---|---|
 | Public bridge entry point and exports | `src/host-compatibility.ts`; listed above |
 | Opt-in and acknowledgment fields | MCPL 0.5 `experimental.slackRecipientRouting`, descriptor v1; connector echo after validation |
 | Versioned envelope schema | `routingVersion: 1`; concrete fields above and implementation validation |
-| Connector commit | Pending final commit |
-| Companion host/framework commit(s) | Pending final commit |
-| Supported runtime/package versions | Pending composition run |
-| Both-lane scheduler and frozen-target test counts | Pending composition run |
-| Negative negotiation tests | Pending composition run |
-| Example host harness versus real host | Record separately; an example harness does not qualify a stock Connectome/framework runtime |
-| Live verification | Not performed by this documentation change |
+| Tested executable/test revision | `ff16866daafba274f949b62d1fcbfe73c512e9d6` |
+| Companion real host/framework commits | **Not implemented/qualified by this connector branch.** Require a reviewed migration connecting the bridge to actual hooks before rollout. |
+| Tested runtime/package versions | macOS/Linux Node 24.14.0/npm 11.9.0; unflagged macOS legacy floor Node 22.12.0/npm 10.9.0; unchanged locked dependencies listed in CONSOLIDATION.md |
+| Connector and helper tests | Nine host-helper tests and eight real connector/in-memory transport integration tests; complete Node 24 suite 360/0; legacy floor 340/0 plus 20 advanced-only skips |
+| Negative negotiation | Missing MCPL, missing/partial/other-recipient descriptor refused before registration; ordinary upstream handshake regressions retained |
+| Frozen typing authorization | Root verified; stale stop cannot clear another turn; pending effects recheck connection, policy generation and capability after asynchronous checks |
+| Example host versus real host | Both lanes tested through actual connector envelopes and bridge; queue/tool/retry/budget carry demonstrated in synthetic embedding. Actual host/framework lifecycle remains unqualified. |
+| Live Slack/provider or deployed-host verification | **Not performed.** Tests use synthetic Slack/provider boundaries; no live pin, service, credentials or agent state changed. |

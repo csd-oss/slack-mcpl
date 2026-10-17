@@ -28,4 +28,3 @@ export async function readUploadPath(path: string): Promise<Buffer> {
     await file.close();
   }
 }
-

@@ -1,0 +1,491 @@
+{
+  "testedCodeAndTestsCommit": "ff16866daafba274f949b62d1fcbfe73c512e9d6",
+  "upstreamBase": "df218e1905c9a30f3fc9075469894c8c0d057754",
+  "baselineManifestSha256": "d59d9e0dcc7ca2306a9993cba7e991cdbc9dda6deeac6e184b6c80e885d07757",
+  "sourceFingerprints": {
+    "baseline": "3cea0ae8ad100ac858a283350a25e695008b4ff7e31ea95d4662d9bd7a00f82a",
+    "candidate": "504dc3f290d68a816efc78b2b629b5b959a672e5378876354c07794371aa3431"
+  },
+  "cleanBuilds": [
+    {
+      "platform": "macOS-arm64",
+      "node": "v24.14.0",
+      "npm": "11.9.0",
+      "checks": [
+        {
+          "check": "npm-ci",
+          "exitCode": 0,
+          "logSha256": "5f7173e29f9cf1035cd15072e43f6554803ff264dab736c04238e4ab020f5e82"
+        },
+        {
+          "check": "typecheck",
+          "exitCode": 0,
+          "logSha256": "af0da96e8e6ebabacb8ee3c8320c34ecab68dbf01f74df85ba7c6a7e181f7926"
+        },
+        {
+          "check": "build",
+          "exitCode": 0,
+          "logSha256": "b8cbfc592cb7fe690b8d65f07f7c93d45abb784b259d8684ff138fc22ae5c924"
+        },
+        {
+          "check": "tests",
+          "exitCode": 0,
+          "logSha256": "d833ebb29c09d7ef51b4650a6b98aaa30015327b7108f05998b36bc0d716e458"
+        }
+      ],
+      "testSummary": [
+        "\u2139 tests 360",
+        "\u2139 pass 360",
+        "\u2139 fail 0",
+        "\u2139 skipped 0"
+      ],
+      "sourceUnchanged": true,
+      "lockUnchanged": true,
+      "lockSha256": "28c37590f6e1e8f6f1716db178838006d27f73c32b3151872c3860fffe6a7e76",
+      "receiptSha256": "58769d058c0c7a6351eb11e7bbc65c00826b8a0f783f011a820a9f3c9bd0cc2d"
+    },
+    {
+      "platform": "Linux-x64",
+      "node": "v24.14.0",
+      "npm": "11.9.0",
+      "checks": [
+        {
+          "check": "npm-ci",
+          "exitCode": 0,
+          "logSha256": "7c09520b1e9d54cb304f746f1e3ff45c1e2aae61d84dddfe91ca37ae943cb0f2"
+        },
+        {
+          "check": "typecheck",
+          "exitCode": 0,
+          "logSha256": "af0da96e8e6ebabacb8ee3c8320c34ecab68dbf01f74df85ba7c6a7e181f7926"
+        },
+        {
+          "check": "build",
+          "exitCode": 0,
+          "logSha256": "b8cbfc592cb7fe690b8d65f07f7c93d45abb784b259d8684ff138fc22ae5c924"
+        },
+        {
+          "check": "tests",
+          "exitCode": 0,
+          "logSha256": "2d0f3a0aac08b3b8a53f380cc57f0e5ce526d66232f771a76c0f9b4fed7b3bfa"
+        }
+      ],
+      "testSummary": [
+        "\u2139 tests 360",
+        "\u2139 pass 360",
+        "\u2139 fail 0",
+        "\u2139 skipped 0"
+      ],
+      "sourceUnchanged": true,
+      "lockUnchanged": true,
+      "lockSha256": "28c37590f6e1e8f6f1716db178838006d27f73c32b3151872c3860fffe6a7e76",
+      "receiptSha256": "2281c1fdffeb1c47a0d5580f4ecd9fdeb8f47d803955db514100b87d8078e1af"
+    },
+    {
+      "platform": "macOS-arm64-legacy-floor",
+      "node": "v22.12.0",
+      "npm": "10.9.0",
+      "checks": [
+        {
+          "check": "npm-ci",
+          "exitCode": 0,
+          "logSha256": "e919fb227a2d285d83bf0eb3f968d7b624caa13a6a86955663446e9b9bb67f26"
+        },
+        {
+          "check": "typecheck",
+          "exitCode": 0,
+          "logSha256": "af0da96e8e6ebabacb8ee3c8320c34ecab68dbf01f74df85ba7c6a7e181f7926"
+        },
+        {
+          "check": "build",
+          "exitCode": 0,
+          "logSha256": "b8cbfc592cb7fe690b8d65f07f7c93d45abb784b259d8684ff138fc22ae5c924"
+        },
+        {
+          "check": "tests",
+          "exitCode": 0,
+          "logSha256": "a83eb98f477df67961d76170b172439e0bed5ae076018358d0e414e0b50c5732"
+        }
+      ],
+      "testSummary": [
+        "# tests 360",
+        "# pass 340",
+        "# fail 0",
+        "# skipped 20"
+      ],
+      "sourceUnchanged": true,
+      "lockUnchanged": true,
+      "lockSha256": "28c37590f6e1e8f6f1716db178838006d27f73c32b3151872c3860fffe6a7e76",
+      "receiptSha256": "46c081a2321dffab9b21359e19dd67e2a8f457b07338a290806498dee29ec640"
+    }
+  ],
+  "baselineReconstruction": {
+    "linuxDistFilesExpected": 193,
+    "linuxDistFilesActual": 193,
+    "linuxMismatches": [],
+    "tests": 328,
+    "receiptSha256": "86d0989a2bc16d32aac0edc14bdb42fdc9cb0861e33f7afd7cdaf7be8e7bda90",
+    "macDifference": "Only nonexecuted dist/tsconfig.tsbuildinfo differs; all 192 other dist files match."
+  },
+  "macParity": {
+    "node": "v24.14.0",
+    "summary": {
+      "passed": 15,
+      "failed": 0
+    },
+    "cases": [
+      {
+        "name": "legacy tool surface and inline upload",
+        "passed": true
+      },
+      {
+        "name": "legacy bot/self filtering",
+        "passed": true
+      },
+      {
+        "name": "joined/read-only/unjoined/private read and write split",
+        "passed": true
+      },
+      {
+        "name": "missing scope and revoked membership fail before effects",
+        "passed": true
+      },
+      {
+        "name": "recipient routing and frozen targets: closed lane",
+        "passed": true
+      },
+      {
+        "name": "recipient routing and frozen targets: open lane",
+        "passed": true
+      },
+      {
+        "name": "DM peer authorization: empty list",
+        "passed": true
+      },
+      {
+        "name": "DM peer authorization: allowed",
+        "passed": true
+      },
+      {
+        "name": "upload input refusals and bounded opt-in path bytes",
+        "passed": true
+      },
+      {
+        "name": "history file references and protected canonical downloads",
+        "passed": true
+      },
+      {
+        "name": "live-profile tool gating and file argument schemas",
+        "passed": true
+      },
+      {
+        "name": "typing follows the frozen old root rather than a later addressed arrival",
+        "passed": true
+      },
+      {
+        "name": "upload and message rollback retains checkpoint boundaries",
+        "passed": true
+      },
+      {
+        "name": "unknown sender provenance is conservative and membership denial cannot consume dedup",
+        "passed": true
+      },
+      {
+        "name": "durable dedup restart and historical budget rows remain intact",
+        "passed": true
+      }
+    ],
+    "receiptSha256": "002bcae1cb73273e7c7a47bbd39cab03480fefc3759b7a0589748c8a93c0f0d6"
+  },
+  "linuxParity": {
+    "node": "v24.14.0",
+    "summary": {
+      "passed": 15,
+      "failed": 0
+    },
+    "cases": [
+      {
+        "name": "legacy tool surface and inline upload",
+        "passed": true
+      },
+      {
+        "name": "legacy bot/self filtering",
+        "passed": true
+      },
+      {
+        "name": "joined/read-only/unjoined/private read and write split",
+        "passed": true
+      },
+      {
+        "name": "missing scope and revoked membership fail before effects",
+        "passed": true
+      },
+      {
+        "name": "recipient routing and frozen targets: closed lane",
+        "passed": true
+      },
+      {
+        "name": "recipient routing and frozen targets: open lane",
+        "passed": true
+      },
+      {
+        "name": "DM peer authorization: empty list",
+        "passed": true
+      },
+      {
+        "name": "DM peer authorization: allowed",
+        "passed": true
+      },
+      {
+        "name": "upload input refusals and bounded opt-in path bytes",
+        "passed": true
+      },
+      {
+        "name": "history file references and protected canonical downloads",
+        "passed": true
+      },
+      {
+        "name": "live-profile tool gating and file argument schemas",
+        "passed": true
+      },
+      {
+        "name": "typing follows the frozen old root rather than a later addressed arrival",
+        "passed": true
+      },
+      {
+        "name": "upload and message rollback retains checkpoint boundaries",
+        "passed": true
+      },
+      {
+        "name": "unknown sender provenance is conservative and membership denial cannot consume dedup",
+        "passed": true
+      },
+      {
+        "name": "durable dedup restart and historical budget rows remain intact",
+        "passed": true
+      }
+    ],
+    "receiptSha256": "002bcae1cb73273e7c7a47bbd39cab03480fefc3759b7a0589748c8a93c0f0d6"
+  },
+  "macIntentionalContracts": {
+    "node": "v24.14.0",
+    "summary": {
+      "passed": 6,
+      "failed": 0
+    },
+    "cases": [
+      {
+        "name": "generic namespace and multiple write-channel policy",
+        "passed": true
+      },
+      {
+        "name": "readJoinedChannels=false with independent authorized DM",
+        "passed": true
+      },
+      {
+        "name": "verified frozen start/stop refuses stale, rootless and missing-parent effects",
+        "passed": true
+      },
+      {
+        "name": "advanced handshake rejects missing/partial support and echoes the complete contract",
+        "passed": true
+      },
+      {
+        "name": "default local paths absent and refused",
+        "passed": true
+      },
+      {
+        "name": "explicit bounded local-path opt-in",
+        "passed": true
+      }
+    ],
+    "receiptSha256": "669f099257183e8986b26419e6bb19ba46ceaffb009a43fc363747b3d037f2c8"
+  },
+  "linuxIntentionalContracts": {
+    "node": "v24.14.0",
+    "summary": {
+      "passed": 6,
+      "failed": 0
+    },
+    "cases": [
+      {
+        "name": "generic namespace and multiple write-channel policy",
+        "passed": true
+      },
+      {
+        "name": "readJoinedChannels=false with independent authorized DM",
+        "passed": true
+      },
+      {
+        "name": "verified frozen start/stop refuses stale, rootless and missing-parent effects",
+        "passed": true
+      },
+      {
+        "name": "advanced handshake rejects missing/partial support and echoes the complete contract",
+        "passed": true
+      },
+      {
+        "name": "default local paths absent and refused",
+        "passed": true
+      },
+      {
+        "name": "explicit bounded local-path opt-in",
+        "passed": true
+      }
+    ],
+    "receiptSha256": "669f099257183e8986b26419e6bb19ba46ceaffb009a43fc363747b3d037f2c8"
+  },
+  "legacyFloorParity": {
+    "node": "v22.12.0",
+    "summary": {
+      "passed": 2,
+      "failed": 0
+    },
+    "cases": [
+      {
+        "name": "legacy tool surface and inline upload",
+        "passed": true
+      },
+      {
+        "name": "legacy bot/self filtering",
+        "passed": true
+      }
+    ],
+    "receiptSha256": "3324240ba73a6aa9e0ab194343e36429c162774611a9ce925abaa8adcd54b72b"
+  },
+  "legacyFloorContracts": {
+    "node": "v22.12.0",
+    "summary": {
+      "passed": 3,
+      "failed": 0
+    },
+    "cases": [
+      {
+        "name": "advanced routing refuses unsupported Node major",
+        "passed": true
+      },
+      {
+        "name": "default local paths absent and refused",
+        "passed": true
+      },
+      {
+        "name": "explicit bounded local-path opt-in",
+        "passed": true
+      }
+    ],
+    "receiptSha256": "13b74af23039625353ee7f6e4aae11b4847d3889d80d9d499a6f83c355e1b218"
+  },
+  "intentionalDifferences": [
+    "Candidate recipient mode additionally requires an explicit host capability attestation.",
+    "Candidate default path uploads are disabled; live-profile parity opts in explicitly.",
+    "Candidate ledger input uses senderKind; added senderKind/authorId provenance is separately checked against adapter identity fields.",
+    "Candidate requires verified frozen roots for typing start and stop; unsafe missing/mismatched stop forms are tested as deliberate hardening, not expected d59d parity.",
+    "Generalized namespaces and multi-channel policies need separate candidate-only tests.",
+    "Pending typing is abandoned across connection or policy-era changes."
+  ],
+  "normalization": "Only the private baseline channel identifier is replaced with a synthetic label. Error wording and tool descriptions are not asserted by this semantic trace matrix.",
+  "formattingFollowup": {
+    "change": "Removed a single trailing blank line from src/upload-path.ts after full-suite validation.",
+    "all19CompiledConnectorJavaScriptFilesByteIdentical": true,
+    "pathSubsetPassed": 6,
+    "buildPassed": true
+  },
+  "limitations": [
+    "No live Slack, provider call or real host/framework lifecycle was exercised.",
+    "Semantic parity covers the named mock traces, not every output string or possible Slack behavior.",
+    "Actual host scheduling, continuation suppression, frozen target propagation and autonomous background wakes require separate qualification."
+  ],
+  "secretScan": {
+    "scanner": "gitleaks 8.30.1",
+    "candidateCommitsFindings": 0,
+    "installationIdentifierMatches": 0
+  },
+  "publicRefs": {
+    "checkedAt": "2026-10-17T23:10:20.596500+00:00",
+    "anima-research/slack-mcpl": {
+      "heads": {
+        "refs/heads/docs/contribution-policy": "df495c3b3249067e38af62a0bfbc37e069248278",
+        "refs/heads/feat/rfc008-tool-classes": "e2c9a89d792b705647a8ed3adf2da8015bce7edc",
+        "refs/heads/main": "df218e1905c9a30f3fc9075469894c8c0d057754"
+      }
+    },
+    "theaspirational/slack-mcpl": {
+      "heads": {
+        "refs/heads/ack-reaction": "4ec937810468547059926b07787032c60c84b670",
+        "refs/heads/feat/slack-thread-status": "bdfaab71d1e15eae19a567ccb567d12c894c1faa",
+        "refs/heads/feat/upload-file": "3e2db10d9a43eff846b78a3c05d8a551be58db4b",
+        "refs/heads/feat/upload-file-path": "c5061f5851ae1222b9ed1cb4f78aaa828a02de87",
+        "refs/heads/fix/5-push-origin-channel": "174ca3a2c0672bbf03583816cb1313c3768dfd38",
+        "refs/heads/fix/list-channels-scopes": "3eb40646495b55b5d35a0804e83c3bceef372c20",
+        "refs/heads/main": "e927a0889deec2ae1ddeec6bca55277bdad6f36f",
+        "refs/heads/mcpl-0.5-grant": "8ddc280b5ca3f16b5a809e3859f2139e21754296",
+        "refs/heads/pr/mcpl-0.5-handshake": "ff9a09b4800367e6065547a6189cb0fdc85482b9",
+        "refs/heads/pr/operator-controls": "93f5023afbc627aacd466c69a8f70144c30002e4",
+        "refs/heads/pr/thread-message-header": "d6f464092342c864289cca343f4aa4c281154870",
+        "refs/heads/rook-build": "a5bae1acbd08f39278603def0753999aed125525",
+        "refs/heads/send-channels-allowlist": "04081eeef711f4a40f656863ca53fd085a6a43cf",
+        "refs/heads/subscribe-member-channels": "4dcbc80bcd650264cbc0eea267c1ec6db24e1c30",
+        "refs/heads/thread-context": "e0f4973a7e2cd14458fb56fc63d4559b3250b77c",
+        "refs/heads/up/feat-slack-thread-status": "bdfaab71d1e15eae19a567ccb567d12c894c1faa",
+        "refs/heads/up/feat-upload-file": "da4555cc53dffd85d425f5a330904f97e8555de1",
+        "refs/heads/up/fix-list-channels-scopes": "6d59174d2e1e5a7645ac51667853bdbf107e19ae"
+      }
+    },
+    "openPRs": [
+      {
+        "number": 12,
+        "title": "feat: show channels/typing as a Slack thread status",
+        "state": "open",
+        "merged": false,
+        "mergeable": true,
+        "mergeable_state": "clean",
+        "head": "bdfaab71d1e15eae19a567ccb567d12c894c1faa"
+      },
+      {
+        "number": 15,
+        "title": "fix: bound concurrent ack cleanup and reject empty switches",
+        "state": "open",
+        "merged": false,
+        "mergeable": true,
+        "mergeable_state": "clean",
+        "head": "9a2e49f7b64fb147831eae609a512f3320e8a53d"
+      },
+      {
+        "number": 20,
+        "title": "feat: declare an exact publish target; honor RFC-011 threadId (#6)",
+        "state": "open",
+        "merged": false,
+        "mergeable": false,
+        "mergeable_state": "dirty",
+        "head": "7afe8df190475c894c1d88c2d638b2eef72539d3"
+      },
+      {
+        "number": 25,
+        "title": "fix: list only conversation types the token can read",
+        "state": "open",
+        "merged": false,
+        "mergeable": true,
+        "mergeable_state": "clean",
+        "head": "6d59174d2e1e5a7645ac51667853bdbf107e19ae"
+      },
+      {
+        "number": 26,
+        "title": "feat: upload_file tool",
+        "state": "open",
+        "merged": false,
+        "mergeable": true,
+        "mergeable_state": "clean",
+        "head": "da4555cc53dffd85d425f5a330904f97e8555de1"
+      },
+      {
+        "number": 29,
+        "title": "fix: answer a rate-limited or failed Slack call at once, and don't send a write again",
+        "state": "open",
+        "merged": false,
+        "mergeable": true,
+        "mergeable_state": "clean",
+        "head": "dc62d5230dcffd2c1dc3aa271df737e30cc93b70"
+      }
+    ]
+  }
+}

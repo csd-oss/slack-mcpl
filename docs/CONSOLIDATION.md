@@ -105,25 +105,53 @@ result still proves compatibility after any of these heads changes.
 
 ## Per-commit coverage record
 
-The consolidation owner must replace `PENDING` with final values. An integrated
-tree can include a fix through ancestry or an adaptation; record which, and do
-not label a patch equivalent without verifying the behavioral delta.
+The implementation base is upstream `df218e1905c9a30f3fc9075469894c8c0d057754`.
+Fresh public ref/PR checks at **2026-10-17 23:10:20 UTC** found the same upstream,
+fork and six open PR heads as the earlier audit. No remote branch was changed.
+The final executable/test revision is `ff16866daafba274f949b62d1fcbfe73c512e9d6`;
+subsequent commits document it and remove one trailing blank line. All 19
+compiled connector JavaScript files remain byte-identical to that tested revision;
+the six path-option tests and build were rerun after the whitespace cleanup.
 
-| Candidate commit | Source PR/commit or local proposal | Behavior retained/changed | Regression tests and numeric result | Upstream/host boundary | Review state |
-|---|---|---|---|---|---|
-| PENDING | Upstream baseline and merged #1/#2/#3/#13/#27 | PENDING ancestry verification | PENDING baseline pass/fail | Existing connector contract | Merged source; candidate composition pending |
-| PENDING | #25 `6d59174` | PENDING exact retained/adapted listing behavior | PENDING pass/fail and red-first case | Connector-only unless explicitly changed | PR open |
-| PENDING | #26 `da4555c` | PENDING inline-only validation/rollback/error delta | PENDING pass/fail and handler regression | No filesystem path | PR open |
-| PENDING | #12 `bdfaab7` | PENDING status/target delta | PENDING pass/fail | Host typing behavior required | PR open |
-| PENDING | Local reusable policy/provenance proposal | PENDING configuration/default changes | PENDING pass/fail | Versioned trusted configuration | New local proposal |
-| PENDING | Local bridge + companion host/framework | PENDING scheduler/target ABI | PENDING both-lane composition counts | See host compatibility record | New local proposal |
-| PENDING | Local optional path-upload commit | Default inline-only; opt-in bounded regular-file FD reads, symlinks allowed, no directory boundary | PENDING path/type/size/default/class regression counts | Separate from inline #26 | Local fork proposal; upstream containment request unresolved |
-| Excluded | #15 / #20 / #29 pending upstream work | No implicit merge | Future composition runs | Breaking switches / RFC-011 / retry policy | Open at audit |
+| Candidate commit | Source coverage / proposed review group | Behavior and boundary | Verification |
+|---|---|---|---|
+| `df218e1` base | Merged #1/#2/#3/#13/#27 and newer upstream fixes | Existing protocol, controls, headers, origin and error behavior retained by ancestry | Baseline 223 pass / 0 fail |
+| `0e664d4` | Open #12, exact source head `bdfaab7` | Generic status feature; no claim of maintainer approval | Combined reviewed baseline below |
+| `d982bca` | Open #25, exact source head `6d59174` | Net reviewed readable-type, empty-type, diagnostic and scope-refresh behavior | Combined reviewed baseline below |
+| `feb2e4f` | Open #26, exact source head `da4555c` | Net reviewed inline-only upload/rollback/result validation and #27 posting classification | Clean combined baseline: 262 pass / 0 fail; build/typecheck pass |
+| `74acea2` | New companion host-contract proposal | Versioned attestation, strict ingress decisions, frozen target helpers; no stock-host qualification | Nine host-helper tests; real connector composition added later |
+| `ab6a1a1` | Review documentation | Initial contract and split; corrected by `ced6eac` | Documentation only |
+| `3bd49c2` | New access/file-reference proposal from local `f189c64`, `4a6180e`, `f73519f`, `96d9cb7` | Explicit fresh access/DM checks, canonical associated attachments, bounded download and usable file IDs; no path enablement | Red-first access tests: 0/29 before feature; focused extraction/fallback suite later 58/0 |
+| `8dff5b0` | New optional recipient/dedup proposal from deployment routing | Identity-bound private SQLite receipts, generic namespace/policy, provenance; no quotas/arming/expiry | 14 routing tests on Node 24 |
+| `ae6dc42` | New narrow membership-proof proposal from local `0db196a` | Fresh history proof for an operator-pinned public write channel; does not grant scope or infer publicness from IDs | Focused extraction/fallback suite 58/0 |
+| `1c09b7c` | Routing compatibility follow-up | Retains existing U-prefixed identity contract; no accidental identifier widening | Included in final runtime matrix |
+| `a2a2015` | Separate optional bounded-path proposal | Default inline-only; opt-in capped regular-file FD reads, symlinks allowed, no directory boundary; files class only on opt-in | Path/upload/class group 28/0; clean extraction snapshot 349/0 |
+| `ced6eac` | Review documentation correction | States path upstream approval blocker; separates history proposals and workspace claims | Documentation only |
+| `15c60af` | New configurable recipient connector integration | Actual adapter/server/CLI use ordinary modules; both lanes, explicit host negotiation, tool suppression, frozen publication/status | Targeted configuration/host/integration suite 17/0 before later regressions |
+| `6808bbb` | Integration regression fixture | Accept Slack-shaped parent with thread_ts equal to ts; refuse child-as-root | Integration suite 6/0 at this point |
+| `ff16866` | Recipient typing lifecycle fix | Discard queued/asynchronous typing after connection or policy-era changes; preserve same-root stop semantics | Integration suite 8/0; independent scope/queue race probes produced no stale effects |
+| `d4bc353` | Setup/migration documentation | CLI options, private receipt namespace and real-host migration boundary | Documentation only |
+| `4e02ba2` | Optional historical review harnesses | Parameterized external baseline/manifest/channel inputs; no deployment IDs or live calls | 15 parity and six intentional-contract cases; see evidence |
+| Excluded | Open #15 / #20 / #29 | No implicit merge; switch changes, RFC-011 reconciliation and retry/rate-limit work remain separate | Future composition runs required; #29 hold remains in force |
 
-For each final group, also record exact Node/Bun/package versions, artifact inputs,
-commands run, baseline/candidate failure counts, mocked external boundaries and
-live checks not performed. An assertion that tests passed without counts or a
-connector test that bypasses the host scheduler is incomplete evidence.
+All feature commits carry changelog coverage and coauthor attribution. Source
+commits are coherent extraction/adaptation commits, not a claim that all original
+PR head SHAs are ancestors. Commit bodies retain exact source heads and coverage.
+
+Final clean installs used the unchanged package lock, SHA-256
+`28c37590f6e1e8f6f1716db178838006d27f73c32b3151872c3860fffe6a7e76`:
+Node 24.14.0/npm 11.9.0 on macOS arm64 and Linux x64 each passed **360 tests,
+0 failures**, typecheck and build. The exact unflagged legacy floor, Node
+22.12.0/npm 10.9.0 on macOS, passed **340 tests, 0 failures**, with **20 explicitly
+skipped advanced-only tests**. Durable recipient mode refuses Node versions
+below 24; importing/using legacy mode does not load SQLite. No dependency or
+package version was changed. Locked core is 0.3.0, Slack Web API 7.19.0,
+Socket Mode 2.0.7, TypeScript 7.0.2 and tsx 4.23.1.
+
+The host tests include real connector protocol envelopes and a synthetic host
+bridge. They do not qualify an actual Connectome/framework scheduler, provider
+continuation or independent background wake path. Those real host composition
+runs remain a rollout prerequisite, recorded in HOST-COMPATIBILITY.md.
 
 ## Historical agent customizations
 
@@ -199,3 +227,73 @@ unverified behavior is stated. Publishing a branch, creating/updating PRs,
 commenting, merging and deploying remain separate actions with their own scope.
 Code rollback must not reset persistent admission receipts, conversation history
 or agent memory. This documentation change performs none of those actions.
+
+## Exact proposed upstream sequence
+
+No PR creation, branch publication or comment is performed by this plan.
+
+| Proposed action | Candidate source | Dependency / scope |
+|---|---|---|
+| Request re-review of existing #12, #25 and #26 | `0e664d4`, `d982bca`, `feb2e4f` and original current PR heads | Preserve three existing submissions; do not create duplicate replacement PRs. Refresh stale descriptions only when separately authorized. |
+| New optional access-policy PR | Access/DM/scope portion of `3bd49c2` | Build on accepted reviewed feature baseline; keep no-policy defaults. Split this extraction commit for upstream review without rewriting this local evidence branch. |
+| New associated-file safety/reference PR | File/download/reference portion of `3bd49c2` | Depends on the access-policy API; exact file/share/canonical URL checks and file IDs, no local paths. |
+| New operator-pinned membership-proof PR | `ae6dc42` | Depends on access policy; explicit trusted public pin, fresh history proof, no scope manufacture or ID-prefix publicness claim. |
+| New optional recipient/provenance/dedup PR | `8dff5b0`, `1c09b7c`, connector/config portions of `15c60af` | Node 24 durable mode, typed options, private identity-bound receipts, generic policies; keep legacy startup at Node 22.12. |
+| Companion host contract and frozen targets | `74acea2`, remaining `15c60af`, `6808bbb`, `ff16866` | Must declare companion real host/framework work. Reconcile naming/semantics with open #20 RFC-011; do not assert this local extension is standard or that #20 is merged. Connector fail-closed handling can land before a real host is qualified. |
+| Separate optional bounded-path fork proposal | `a2a2015` | Depends on inline upload; disabled by default. Upstream review requested containment, which this parity-preserving OS-file option does not implement. Resolve that design before submitting it upstream; never restore old unbounded path handoff. |
+| Documentation and test follow-ups | `ab6a1a1`, `ced6eac`, `d4bc353`, final evidence commit | Fold each document/test into its corresponding future PR; preserve numerical evidence and limitations. |
+
+Do not update fork main until the owner reviews this exact local diff and plan.
+After review, the main fast-forward and any proposed branch publication remain
+separate actions. A new immutable connector release would remove the need for
+connector text transforms; deployments would supply only version pins, policy,
+credential references and private state. Host patch removal requires a separately
+published compatible host/framework release or tested adapter. No live pin changes
+follow automatically from any future source merge.
+
+## Behavior parity and evidence limits
+
+[review-evidence.json](review-evidence.json) records exact runtimes, commands,
+receipt/log checksums, public refs and named semantic cases. Reconstructing the
+historical baseline on Linux matched **all 193 compiled files** of manifest
+`d59d9e0dcc7ca2306a9993cba7e991cdbc9dda6deeac6e184b6c80e885d07757`
+and passed **328 tests**. The Mac reconstruction matched the other 192 files,
+with only nonexecuted TypeScript build-cache metadata differing.
+
+The candidate passed **15/15 differential cases** and **6/6 intentional-contract
+cases** on both Mac and Linux Node 24. The exact Node 22.12 floor passed **2/2
+legacy trace comparisons** and **3/3 floor/default-path contracts**. Comparisons
+cover legacy tools/self filtering; joined/read-only/unjoined/private access;
+missing scopes/revocation; both routing lanes/frozen publication; DM admission;
+upload validation and optional bounded paths; file references/protected downloads;
+tool/schema policy; frozen typing; mixed rollback; unknown sender admission before
+dedup; and durable restart with untouched legacy budget rows.
+
+Intentional differences are separately asserted: explicit host capability
+attestation, inline-only default with path opt-in, generalized namespace/multiple
+channels, independent DM-only policy, richer provenance fields, and root-bound
+status that cannot survive an invalidated connection/policy or clear another
+turn. No arming/count/expiry gate, stale automatic target fallback or unbounded
+SDK path handoff was restored.
+
+The semantic matrix normalizes only the baseline installation channel to a
+synthetic identifier. It does not assert every error string/tool description or
+prove equivalence for all possible inputs. Connector unit and real in-memory
+protocol tests add negative negotiation, official Slack parent shaping, child-root
+refusal, read-only effects and policy/connection race coverage. Real framework
+storage/scheduler/continuation integration remains a separate prerequisite.
+
+All tests use synthetic accounts/messages and mock external boundaries. No new
+credentials, permission grants, client histories, provider calls, service changes,
+pushes or upstream PR writes were performed. A redacted Gitleaks 8.30.1 commit
+scan found zero findings; known installation identifiers were absent from changed
+source/tests/docs. The actual live manifest was used as a historical verification
+fingerprint, not as permission to access an agent's writable state.
+
+The parameterized review harnesses are included in
+[scripts/validation](../scripts/validation/README.md). They take the verified
+historical source/manifest and its installation anchor externally; no historical
+private identity is embedded in public test code. They fingerprint source inputs,
+require a supplied manifest checksum, and write reports outside the repository.
+They do not independently certify arbitrary baseline source; the reconstruction
+and manifest evidence above provides that separate link for this review.

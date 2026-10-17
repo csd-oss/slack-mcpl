@@ -126,6 +126,10 @@ metadata discovery with `users:read`; it does not grant message access. Legacy
 write allowlists still apply as an additional restriction. Without an explicit
 policy, existing flags and behavior are unchanged.
 
+With an explicit policy, its `dmUsers` list is authoritative for DM read/write
+admission; the legacy `SLACK_DM_USERS` and `SLACK_DISABLE_DMS` controls describe
+the no-policy mode. Use an empty policy `dmUsers` list to disable DMs explicitly.
+
 An optional `historyMembershipFallbackChannels` list names exact write destinations
 that the operator has independently verified are public. If `channels:read` is
 absent, each operation proves fresh membership with a successful bot-token
