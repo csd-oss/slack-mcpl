@@ -538,11 +538,12 @@ export class SlackAdapter {
 
   /** Optional frozen-target status path. A delayed stop for one turn must not
    * clear another turn's thread status. Legacy status behavior is unchanged. */
-  async setRecipientThreadStatus(channelId: string, root: string, stop: boolean): Promise<void> {
+  async setRecipientThreadStatus(channelId: string, root: string, stop: boolean, isCurrent = () => true): Promise<void> {
     const previous = this.recipientStatusOperations.get(channelId) ?? Promise.resolve();
     const operation = previous.then(async () => {
-      if (!stop) await this.setThreadStatus(channelId, root);
-      else if (this.statusOn.get(channelId)?.ts === root) await this.setThreadStatus(channelId, undefined);
+      if (!isCurrent()) return;
+      if (!stop) await this.setThreadStatus(channelId, root, isCurrent);
+      else if (this.statusOn.get(channelId)?.ts === root) await this.setThreadStatus(channelId, undefined, isCurrent);
     });
     this.recipientStatusOperations.set(channelId, operation);
     try { await operation; }
@@ -554,23 +555,25 @@ export class SlackAdapter {
    *  thread clears the old one. Only where the bot may write: a status in a
    *  read-only conversation would tell its readers the bot is reading.
    *  Best-effort: never throws. */
-  async setThreadStatus(channelId: string, threadTs: string | undefined): Promise<void> {
+  async setThreadStatus(channelId: string, threadTs: string | undefined, isCurrent = () => true): Promise<void> {
+    if (!isCurrent()) return;
     const cur = this.statusOn.get(channelId);
     if (threadTs && cur?.ts === threadTs && Date.now() - cur.at < STATUS_REFRESH_MS) return;
     if (cur && cur.ts !== threadTs) {
       this.statusOn.delete(channelId);
-      await this.callStatus(channelId, cur.ts, '');
+      await this.callStatus(channelId, cur.ts, '', isCurrent);
     }
-    if (!threadTs || !this.canWrite(channelId)) return;
+    if (!threadTs || !this.canWrite(channelId) || !isCurrent()) return;
     if (!this.accessPolicy && this.disableDms && (this.dmIds.has(channelId) || channelId.startsWith('D'))) return;
     this.statusOn.set(channelId, { ts: threadTs, at: Date.now() });
-    if (!(await this.callStatus(channelId, threadTs, STATUS_TEXT))) this.statusOn.delete(channelId);
+    if (!(await this.callStatus(channelId, threadTs, STATUS_TEXT, isCurrent))) this.statusOn.delete(channelId);
   }
 
-  private async callStatus(channelId: string, threadTs: string, status: string): Promise<boolean> {
+  private async callStatus(channelId: string, threadTs: string, status: string, isCurrent = () => true): Promise<boolean> {
     if (!this.web.assistant) return false;
     try {
       if (this.accessPolicy) await this.requireWritableConversation(channelId, 'chat:write');
+      if (!isCurrent()) return false;
       await this.web.assistant.threads.setStatus({ channel_id: channelId, thread_ts: threadTs, status });
       return true;
     } catch (err) {

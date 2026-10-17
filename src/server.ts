@@ -135,6 +135,8 @@ export class SlackMcplServer {
   private channelManager = new ChannelManager();
   /** A new registration supersedes work started under an earlier grant. */
   private registrationGeneration = 0;
+  /** Invalidates asynchronous recipient effects across policy changes. */
+  private policyGeneration = 0;
   /** The latest registration, which refresh_channels waits for. */
   private registration: Promise<void> = Promise.resolve();
   private stateTracker = new StateTracker();
@@ -381,6 +383,7 @@ export class SlackMcplServer {
           // consequences, never a claim of entitlement. Only this form can
           // establish a ready state (§5.3).
           this.requireMcpl();
+          this.policyGeneration++;
           const couldRegister = this.grant.has('channels.register');
           const receipt = this.grant.apply(params as unknown as FeatureSetsUpdateParams, 'request');
           conn.sendResponse(req.id, receipt);
@@ -516,6 +519,7 @@ export class SlackMcplServer {
         // §6.7 Notification form: descriptive metadata only. Grant-bearing
         // updates (including the §5.3 initial policy) arrive as a Request.
         if (this.mcplEnabled) {
+          this.policyGeneration++;
           this.grant.apply(notif.params as unknown as FeatureSetsUpdateParams, 'notification');
         }
         break;
@@ -538,11 +542,14 @@ export class SlackMcplServer {
         const frozenRoot = p.metadata?.supportRecipientReplyRoot;
         if (this.slack.routing) {
           if (typeof frozenRoot !== 'string' || !/^\d+\.\d+$/.test(frozenRoot)) break;
+          const connection = this.conn, generation = this.policyGeneration;
+          const isCurrent = () => this.conn === connection && !!connection && !connection.isClosed
+            && this.policyGeneration === generation && this.mcplEnabled && this.grant.has('channels.typing');
           // Verify the explicit root for both start and stop. Never clear a
           // different turn's status because an ambient arrival moved context.
           void this.slack.fetchThread(id, frozenRoot, 1).then(parent => {
-            if (parent.messages[0]?.id === frozenRoot && !parent.messages[0]?.threadTs)
-              return this.slack.setRecipientThreadStatus(id, frozenRoot, p.op === 'stop');
+            if (isCurrent() && parent.messages[0]?.id === frozenRoot && !parent.messages[0]?.threadTs)
+              return this.slack.setRecipientThreadStatus(id, frozenRoot, p.op === 'stop', isCurrent);
           }).catch(() => {});
         } else void this.slack.setThreadStatus(id, p.op === 'stop' ? undefined : this.lastIncomingRoot.get(id));
         break;

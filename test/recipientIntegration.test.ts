@@ -19,6 +19,8 @@ function fixture(t: {after(fn: () => unknown): void}) {
   const socket = {on(_event: string, handler: any) {listener = handler;}, async start() {}, async disconnect() {}};
   let member = true;
   let parentThread: string | undefined;
+  let repliesGate: Promise<void> | undefined;
+  let repliesWaiting = false;
   const web = {
     conversations: {
       async list() { return {channels: ['CWRITE', 'CREAD'].map(id => ({id, name: id, is_member: member,
@@ -27,7 +29,10 @@ function fixture(t: {after(fn: () => unknown): void}) {
         is_im: channel.startsWith('D'), is_mpim: false, is_private: false, user: 'UOWNER'}};},
       async open() {return {channel: {id: 'DPEER'}};},
       async history() {return {messages: []};},
-      async replies({ts}: any) {return {messages: [{ts, thread_ts: parentThread ?? ts, user: 'UOWNER', text: 'root'}]};},
+      async replies({ts}: any) {
+        if (repliesGate) {repliesWaiting = true; await repliesGate;}
+        return {messages: [{ts, thread_ts: parentThread ?? ts, user: 'UOWNER', text: 'root'}]};
+      },
     },
     chat: {async postMessage(args: any) {posts.push(args); return {ts: '999.1'};}, async update() {}, async delete() {}},
     reactions: {async add(args: any) {reactions.push(args);}, async remove() {}},
@@ -44,6 +49,11 @@ function fixture(t: {after(fn: () => unknown): void}) {
   return {...host, slack, posts, statuses, reactions,
     revoke() {member = false;},
     useChildAsParent() {parentThread = '50.1';},
+    holdReplies() {
+      let release!: () => void;
+      repliesGate = new Promise<void>(resolve => {release = resolve;});
+      return {release, pending: () => repliesWaiting};
+    },
     async emit(patch: Record<string, unknown> = {}) {
       await listener({event: {type: 'message', channel: 'CWRITE', user: 'UOWNER', ts: '100.2',
         text: '<@USELF> hello', ...patch}, ack: async () => {}});
@@ -151,3 +161,22 @@ advanced('Slack-shaped equal-root parents are accepted but a child cannot be use
   assert.equal(h.statuses.length, 0);
   assert.equal(h.posts.length, 1);
 });
+
+for (const interruption of ['policy-replaced', 'disconnected'] as const) {
+  advanced(`delayed typing cannot survive ${interruption}`, async t => {
+    const h = fixture(t); await ready(h);
+    const blocked = h.holdReplies();
+    h.host.sendNotification(method.CHANNELS_TYPING, {channelId: 'slack:CWRITE', op: 'start',
+      metadata: {supportRecipientReplyRoot: '100.1'}});
+    await until(blocked.pending, 'pending parent lookup');
+    if (interruption === 'policy-replaced') {
+      await h.host.sendRequest(method.FEATURE_SETS_UPDATE, {effectiveCapabilities: []});
+      // Even a restored grant is a new policy era, not permission to resume
+      // effects abandoned by the previous one.
+      await h.host.sendRequest(method.FEATURE_SETS_UPDATE, {effectiveCapabilities: [...FULL_GRANT, 'channels.typing']});
+    } else await h.close();
+    blocked.release();
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(h.statuses.length, 0);
+  });
+}

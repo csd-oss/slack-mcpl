@@ -206,6 +206,7 @@ durableTest('unsafe state paths are refused and close is idempotent', (t) => {
   const hardlink = join(dir, 'hardlink'); linkSync(path, hardlink);
   assert.throws(() => new RoutingLedger(hardlink, 'UBOT', 'workspace', policy), /private regular file/);
   const publicFile = join(dir, 'public'); writeFileSync(publicFile, '', { mode: 0o644 });
+  chmodSync(publicFile, 0o644); // Explicitly public even under a private process umask.
   assert.throws(() => new RoutingLedger(publicFile, 'UBOT', 'workspace', policy), /private regular file/);
   const publicDir = join(dir, 'public-dir');
   // The parent must preexist and be private, never created implicitly.

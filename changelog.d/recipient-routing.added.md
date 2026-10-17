@@ -9,4 +9,5 @@
   but an arbitrary host is not qualified merely by importing it.
 - Recipient-mode prose requires an explicit verified thread root. Typing also
   uses an explicit verified root; a delayed stop cannot clear another turn's status.
+  Pending typing work is discarded when its connection or policy era changes.
   Durable routing requires Node 24+ on POSIX; legacy operation retains Node 22.12.0.
