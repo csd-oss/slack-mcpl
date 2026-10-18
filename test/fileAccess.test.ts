@@ -49,8 +49,9 @@ async function fixture(t: any, opts: { legacy?: boolean; scopes?: string[] } = {
 
 test('explicit file fetch requires channel and file IDs and ignores untrusted requested URLs', async (t) => {
   const h = await fixture(t);
-  const listed = await h.host.sendRequest('tools/list') as { tools: Array<{ name: string; inputSchema: { required: string[] } }> };
+  const listed = await h.host.sendRequest('tools/list') as { tools: Array<{ name: string; inputSchema: { required: string[]; properties: Record<string, unknown> } }> };
   assert.deepEqual(listed.tools.find((tool) => tool.name === 'fetch_attachment')?.inputSchema.required, ['channelId', 'fileId']);
+  assert.ok(['channelId', 'fileId'].every((key) => key in listed.tools.find((tool) => tool.name === 'fetch_attachment')!.inputSchema.properties));
   const missing = await h.call({ url: 'https://files.slack.com/files-pri/T1-F1/input.txt' });
   assert.equal(missing.isError, true);
   assert.match(missing.content[0].text, /channelId is required/);

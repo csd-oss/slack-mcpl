@@ -402,7 +402,20 @@ export class SlackMcplServer {
             // An explicit access policy fetches an attachment by its
             // conversation and file ID, never by a URL a message carries.
             .map((tool) => this.slack.hasExplicitAccessPolicy && tool.name === 'fetch_attachment'
-              ? { ...tool, inputSchema: { ...tool.inputSchema, required: ['channelId', 'fileId'] } }
+              ? {
+                  ...tool,
+                  description: `${tool.description} With this server's explicit access policy, pass channelId and fileId ` +
+                    'instead of url: membership and the file\'s association with the conversation are checked, and redirects are refused.',
+                  inputSchema: {
+                    ...tool.inputSchema,
+                    properties: {
+                      ...tool.inputSchema.properties,
+                      channelId: { type: 'string', description: 'Readable Slack conversation containing this file' },
+                      fileId: { type: 'string', description: 'Slack file ID (F…), as an attachment reference gives it' },
+                    },
+                    required: ['channelId', 'fileId'],
+                  },
+                }
               : tool);
           // MCPL RFC-008: each tool carries its class in _meta['mcpl/class'].
           conn.sendResponse(req.id, { tools: withToolClasses(listed) });
