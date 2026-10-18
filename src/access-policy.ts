@@ -31,7 +31,7 @@ export class SlackAccessPolicy {
 
   constructor(config: SlackAccessPolicyConfig) {
     if (!Array.isArray(config.writeChannels) || !config.writeChannels.every((id) => typeof id === 'string' && /^[CG][A-Z0-9]+$/.test(id))
-        || !Array.isArray(config.dmUsers) || !config.dmUsers.every((id) => typeof id === 'string' && /^U[A-Z0-9]+$/.test(id))
+        || !Array.isArray(config.dmUsers) || !config.dmUsers.every((id) => typeof id === 'string' && /^[UW][A-Z0-9]+$/.test(id))
         || typeof config.readJoinedChannels !== 'boolean') throw new Error('Invalid Slack access policy');
     this.writeChannels = new Set(config.writeChannels);
     this.dmUsers = new Set(config.dmUsers);

@@ -35,7 +35,7 @@ export function optionalConfiguration(env: Record<string, string | undefined>) {
     if (!accessPolicy || typeof routing.stateFile !== 'string' || !isAbsolute(routing.stateFile)
         || typeof routing.namespace !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(routing.namespace)
         || (routing.expectedBotUserId !== undefined && (typeof routing.expectedBotUserId !== 'string'
-          || !/^U[A-Z0-9]+$/.test(routing.expectedBotUserId)))) {
+          || !/^[UW][A-Z0-9]+$/.test(routing.expectedBotUserId)))) {
       throw new Error('Recipient routing requires an explicit access policy, absolute state file and namespace');
     }
     recipientRouting = routing as unknown as RecipientRoutingConfig;

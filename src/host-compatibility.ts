@@ -22,7 +22,8 @@ export interface HostAccessPolicy {
   dmUsers: readonly string[];
 }
 
-const USER = /^U[A-Z0-9]+$/;
+/** A Slack user ID: U… in a workspace, W… on Enterprise Grid. */
+const USER = /^[UW][A-Z0-9]+$/;
 const CHANNEL = /^[CGD][A-Z0-9]+$/;
 const STAMP = /^\d+\.\d+$/;
 
