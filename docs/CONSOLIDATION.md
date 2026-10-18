@@ -6,7 +6,7 @@ operator policy and host requirements reviewable without carrying an
 installation's identities, private paths, credentials or history into the public
 connector.
 
-## Starting evidence
+## Historical v1 starting evidence
 
 The 2026-10-17 PR audit found 21 upstream PRs and no PRs against the owner fork.
 Seven upstream submissions came from that fork: #1, #2, #3 and #13 were merged;
@@ -36,9 +36,9 @@ review is a separate authorized external action.
 
 For #29, the author's stated hold was no merge before **2026-10-18 05:00 UTC** and
 successful pre-merge checks, with a maintainer request to wait taking precedence.
-Local analysis does not waive that hold. This plan performs no merge or remote
-operation for #15, #20 or #29. Their state must be refreshed before any future
-external action.
+Local analysis does not waive that hold. At that v1 revision the plan performed no merge or remote
+operation for #15, #20 or #29. The v2 update below records the subsequent local
+merge of accepted upstream #15. Refresh public state before any external action.
 
 ## Separate source behavior from installation policy
 
@@ -102,11 +102,11 @@ changes, and explicit merge-order guidance for companion host work.
    upload time. Generic access, DM, grants, disabled tools and recipient-host
    safeguards stay composed. Keep this path proposal separate from inline #26.
 
-Pending #15/#29 work may require later composition tests because it changes ack,
+Subsequent #15/#29 changes require composition tests because they change ack,
 listing, registration or retry paths. Do not claim a clean historical merge-tree
 result still proves compatibility after any of these heads changes.
 
-## Per-commit coverage record
+## Historical v1 per-commit coverage record
 
 The implementation base is upstream `df218e1905c9a30f3fc9075469894c8c0d057754`.
 Fresh public ref/PR checks at **2026-10-17 23:10:20 UTC** found the same upstream,
@@ -306,6 +306,10 @@ and manifest evidence above provides that separate link for this review.
 `review/consolidated-connector-v1` remains at its prior evidence revision. The new
 `review/consolidated-path-uploads-v2` branch starts at `bb74c6b`, merges upstream
 `e1e1d7b` (test-only PR #30) additively, and replaces only the draft path API.
+It also merges accepted upstream `1ed18ec` (PR #15 acknowledgement cleanup and
+strict boolean switches), retaining the explicit access-policy guard in the new
+shared acknowledgement removal path. Thus earlier v1 statements excluding #15
+are historical, while #20/#29 remain outside this adoption.
 Earlier counts and receipts in this document describe v1 and must not be reused
 as v2 test claims. The optional differential harness maps only the historical
 baseline to its old boolean API; the candidate explicitly selects unrestricted
@@ -313,3 +317,14 @@ mode for that existing parity scenario. This does not enable a deployed service.
 
 See README for the current optional-Python contract, input policy and migration.
 No live source, token scopes, recipe, stored state or deployment was changed.
+
+The v2 Mac arm64 check used Node 24.14.0/npm 11.9.0: **423 pass, 0 fail,
+1 Linux-only skip (424 total)**, with typecheck and build passing. This includes
+the shared reader's restricted/unrestricted parent-spelling regression, the ten
+candidate-specific preflight/revalidation checks, preserved access/routing/typing
+coverage, and the newly merged acknowledgement/strict-switch tests. The reader
+is byte-identical to dedicated path commit `31c7429`, SHA-256
+`7ddf4f690ae20118cf867eb6e3b199aeb1a0093a51f6af931d5aa7c8f12b84b1`.
+Linux and legacy-floor composition are separate validation results; this count
+must not be presented as evidence for those environments. Tests used synthetic
+fixtures and local mocks, without live Slack calls.
