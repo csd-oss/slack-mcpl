@@ -127,6 +127,7 @@ export interface Harness {
   server: SlackMcplServer;
   socket: FakeSocket;
   host: McplConnection;
+  serverConn: McplConnection;
   hostSaw: JsonRpcRequest[];
   /** chat.postMessage calls that reached Slack. */
   posts: unknown[];
@@ -195,6 +196,8 @@ export function connectHost(server: SlackMcplServer, opts: HarnessOptions = {}) 
   const served = server.serve(serverConn);
   return {
     host,
+    /** The server's end, for a test to hear what reaches it. */
+    serverConn,
     hostSaw,
     served,
     async close() {
@@ -208,8 +211,8 @@ export function connectHost(server: SlackMcplServer, opts: HarnessOptions = {}) 
 export function harness(opts: HarnessOptions = {}): Harness {
   const { slack, socket, posts, reactions, statuses, uploads, deletedMessages, deletedFiles } = fakeSlack(opts);
   const server = new SlackMcplServer(slack, { subscribeMemberChannels: opts.subscribeMemberChannels });
-  const { host, hostSaw, served, close } = connectHost(server, opts);
-  return { server, socket, host, hostSaw, posts, reactions, statuses, uploads, deletedMessages, deletedFiles, served, close };
+  const { host, serverConn, hostSaw, served, close } = connectHost(server, opts);
+  return { server, socket, host, serverConn, hostSaw, posts, reactions, statuses, uploads, deletedMessages, deletedFiles, served, close };
 }
 
 export async function initialize(h: { host: McplConnection }, mcpl: boolean) {
