@@ -109,7 +109,9 @@ test('upload_file follows the allow-list and passes the file to Slack', async ()
     },
   } as any;
   const adapter = new SlackAdapter(web, socket, 'UBOT', 'acme', undefined, ['CALLOWED']);
-  await assert.rejects(adapter.uploadFile('COTHER', { filename: 'a.csv', data: Buffer.from('x') }), /not allowed/);
+  await assert.rejects(adapter.uploadFile('COTHER', { filename: 'a.csv', data: Buffer.from('x') }), {
+    message: refusal('Nothing was uploaded'),
+  });
   assert.equal(asked.length, 0);
   const r = await adapter.uploadFile('CALLOWED', { filename: 'a.csv', data: Buffer.from('a,b'), threadTs: '1.0', comment: 'please load:' });
   assert.equal(r.fileId, 'FSC1');
