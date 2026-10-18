@@ -1,0 +1,20 @@
+{
+  "event_count": 1202,
+  "tool_call_count": 14,
+  "unparsed_events": 0,
+  "bounded_events": 10,
+  "session": {
+    "status": "found",
+    "filename": "dispatch-CONV-P8129-reviewer-20261018T114906-run-01M57DG4PPKAHRVFZRZF7GMJC8.jsonl",
+    "size_bytes": 1074886
+  },
+  "native_transcript": {
+    "status": "found",
+    "path": "/Users/aspirational/.claude/projects/-Users-aspirational-Documents-Codex-2026-10-16-task-slack-opus-main-review-20261018/be9a4d51-2c4b-4e17-af8c-6e3f9c76f4f2.jsonl",
+    "session_id": "be9a4d51-2c4b-4e17-af8c-6e3f9c76f4f2",
+    "confidence": "high",
+    "correlation": "recorded_native_runtime_session_path"
+  },
+  "narrative": [],
+  "narrative_truncated": false
+}
