@@ -174,7 +174,7 @@ durableTest('malformed metadata, missing membership and cross-channel proofs fai
   try {
     for (const changes of [
       { channel: '../CWRITE' }, { channel: ['CWRITE'] }, { id: '' }, { root: 'invalid' },
-      { senderKind: 'owner' }, { authorId: ['UHUMAN'] }, { mentions: ['not-a-user'] }, { mentions: ['WBOT'] },
+      { senderKind: 'owner' }, { authorId: ['UHUMAN'] }, { mentions: ['not-a-user'] }, { mentions: ['wbot'] },
       { mentions: ['UBOT', 'UBOT'] }, { access: undefined },
       { access: { ...channel().access, channelId: 'COTHER' } },
       { access: { ...channel().access, joined: false } },
@@ -185,13 +185,23 @@ durableTest('malformed metadata, missing membership and cross-channel proofs fai
   } finally { ledger.close(); }
 });
 
+durableTest('Enterprise Grid user IDs (W…) pass as authors, mentions, DM users and the bot itself', (t) => {
+  const { path } = directory(t);
+  const ledger = new RoutingLedger(path, 'WBOT', 'workspace', { ...policy, dmUsers: ['WHUMAN'] });
+  try {
+    assert.equal(ledger.receive(channel({ authorId: 'WHUMAN', mentions: ['WBOT', 'UOTHER'] }))?.wakeAllowed, true);
+    assert.equal(ledger.receive(dm({ id: '2.0', root: '2.0', authorId: 'WHUMAN', dmAuthorizedPeer: 'WHUMAN',
+      access: { version: 1, channelId: 'DCHAT', readable: true, kind: 'dm', dmPeer: 'WHUMAN' } }))?.wakeAllowed, true);
+    for (const bad of ['wbot', 'W-BOT', 'X123', 'W']) assert.throws(() => ledger.receive(channel({ id: '3.0', mentions: [bad] })));
+  } finally { ledger.close(); }
+});
+
 durableTest('invalid constructor configuration fails without creating or truncating state', (t) => {
   const { path } = directory(t);
   for (const [user, namespace, config] of [
-    ['not-a-user', 'workspace', policy], ['WBOT', 'workspace', policy], ['UBOT', '', policy], ['UBOT', 123, policy],
+    ['not-a-user', 'workspace', policy], ['UBOT', '', policy], ['UBOT', 123, policy],
     ['UBOT', 'workspace', { ...policy, writeChannels: ['DCHAT'] }],
     ['UBOT', 'workspace', { ...policy, dmUsers: ['bad'] }],
-    ['UBOT', 'workspace', { ...policy, dmUsers: ['WHUMAN'] }],
     ['UBOT', 'workspace', { ...policy, dmUsers: ['UHUMAN', 'UHUMAN'] }],
     ['UBOT', 'workspace', { ...policy, readJoinedChannels: 'true' }],
   ]) assert.throws(() => new RoutingLedger(path, user as string, namespace as string, config as any));

@@ -60,7 +60,8 @@ interface Database {
   prepare(sql: string): Statement;
   close(): void;
 }
-const USER = /^U[A-Z0-9]{1,63}$/;
+/** A Slack user ID: U… in a workspace, W… on Enterprise Grid. */
+const USER = /^[UW][A-Z0-9]{1,63}$/;
 const CHANNEL = /^[CGD][A-Z0-9]{1,63}$/;
 // Bound the decimal Slack timestamp text; preserve it exactly, without float conversion.
 const TS = /^\d{1,20}\.\d{1,10}$/;
