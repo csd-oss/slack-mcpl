@@ -23,3 +23,9 @@ test('malformed or misspelled policy and recipient settings fail before connecti
     {SLACK_ACCESS_POLICY: JSON.stringify(accessPolicy), SLACK_RECIPIENT_ROUTING: JSON.stringify({stateFile: '/private/db', namespace: 'test', expectedBotUserId: 'other'})},
   ]) assert.throws(() => optionalConfiguration(env));
 });
+
+test('the old boolean path switch is refused rather than read as off', () => {
+  for (const value of ['', 'false', 'true', '0']) {
+    assert.throws(() => optionalConfiguration({SLACK_ALLOW_FILE_PATHS: value}), /was removed.*SLACK_PATH_UPLOADS/);
+  }
+});

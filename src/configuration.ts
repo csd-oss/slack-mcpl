@@ -21,6 +21,10 @@ function object(value: unknown, keys: string[], name: string): Record<string, un
 }
 
 export function optionalConfiguration(env: Record<string, string | undefined>) {
+  // A local draft's boolean switch for paths; it must not be read as off.
+  if (env.SLACK_ALLOW_FILE_PATHS !== undefined) {
+    throw new Error('SLACK_ALLOW_FILE_PATHS was removed; configure SLACK_PATH_UPLOADS restricted directories or explicit unrestricted mode');
+  }
   let accessPolicy: SlackAccessPolicyConfig | undefined;
   if (env.SLACK_ACCESS_POLICY !== undefined) {
     const policy = object(json(env.SLACK_ACCESS_POLICY, 'SLACK_ACCESS_POLICY'),

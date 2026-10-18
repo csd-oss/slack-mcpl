@@ -30,6 +30,8 @@
  *   SLACK_RECIPIENT_ROUTING - Optional: private stateFile/namespace/expectedBotUserId JSON;
  *                       requires explicit access policy and compatible MCPL host
  *   SLACK_DISABLED_TOOLS - Optional: comma-separated tool names to hide/refuse
+ *   SLACK_PATH_UPLOADS - Optional: explicit JSON policy for local path inputs:
+ *                       restricted directories or trusted unrestricted mode
  */
 
 import * as net from 'node:net';
@@ -39,6 +41,7 @@ import { SlackMcplServer } from './server.js';
 import { booleanFlag } from './config.js';
 import { serveTcp } from './tcp.js';
 import { optionalConfiguration } from './configuration.js';
+import {validatePathUploadPolicy, type PathUploadPolicy} from './upload-path.js';
 
 /** A yes/no switch from the environment. A bad value stops the server with
  *  one line naming it: it is the operator's to fix, not a crash to trace. */
@@ -80,6 +83,14 @@ async function main(): Promise<void> {
     console.error('SLACK_SEND_CHANNELS is set but names no conversation; unset it to allow writing anywhere');
     process.exit(1);
   }
+  let pathUploads: PathUploadPolicy | undefined;
+  if (process.env.SLACK_PATH_UPLOADS !== undefined) {
+    const refused = 'SLACK_PATH_UPLOADS must configure restricted directories or explicit unrestricted mode';
+    let parsed: unknown;
+    // JSON.parse's message can quote the value, so it isn't passed on.
+    try { parsed = JSON.parse(process.env.SLACK_PATH_UPLOADS); } catch { throw new Error(`${refused}, as JSON`); }
+    try { pathUploads = validatePathUploadPolicy(parsed); } catch (err) { throw new Error(`${refused}: ${(err as Error).message}`); }
+  }
   const disableDms = flag('SLACK_DISABLE_DMS');
   const subscribeMemberChannels = flag('SLACK_SUBSCRIBE_MEMBER_CHANNELS');
   const ackReaction = process.env.SLACK_ACK_REACTION?.replace(/:/g, '').trim() || undefined;
@@ -88,6 +99,7 @@ async function main(): Promise<void> {
   const server = new SlackMcplServer(slack, {
     subscribeMemberChannels,
     disabledTools: optional.disabledTools,
+    pathUploads,
   });
   await slack.start();
   console.error(
@@ -106,6 +118,7 @@ async function main(): Promise<void> {
     if (stopping) return;
     stopping = true;
     setTimeout(() => process.exit(0), 5000).unref();
+    server.close();
     void slack.stop().finally(() => process.exit(0));
   };
   process.once('SIGTERM', shutdown);

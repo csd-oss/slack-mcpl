@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { associatedFileUrl } from '../src/file-access.js';
+import { SLACK_MAX_FILE_BYTES } from '../src/content.js';
 import { SlackAdapter } from '../src/slack-adapter.js';
 import { SlackMcplServer } from '../src/server.js';
 import { connectHost, initialize } from './harness.js';
@@ -131,3 +132,15 @@ test('legacy URL-only fetch remains compatible without the explicit profile', as
   assert.equal(h.downloads[0].url, 'https://files.slack.com/files-pri/T1-F1/legacy.txt');
 });
 
+
+test('upload adapter refuses raw paths and bytes past Slack\'s per-file limit before any Slack effect', async () => {
+  let steps = 0;
+  const adapter = new SlackAdapter({ files: {
+    getUploadURLExternal: async () => { steps++; return {}; },
+    completeUploadExternal: async () => { steps++; return {}; },
+  } } as any, { on() {} } as any, 'UBOT', 'workspace');
+  await assert.rejects(adapter.uploadFile('C1', { filename: 'x', data: '/private/file' as any }), /bounded Buffer/);
+  const large = Object.defineProperty(Buffer.alloc(1), 'byteLength', { value: SLACK_MAX_FILE_BYTES + 1 });
+  await assert.rejects(adapter.uploadFile('C1', { filename: 'x', data: large }), /bounded Buffer/);
+  assert.equal(steps, 0);
+});
