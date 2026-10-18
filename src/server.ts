@@ -40,7 +40,8 @@ import type {
 } from '@animalabs/mcpl-core';
 
 import type { SlackAdapter, SlackMessageData } from './slack-adapter.js';
-import { toolDefinitions } from './tools.js';
+import { toolDefinitionsForPathUploads } from './tools.js';
+import {PathUploadReader, type PathUploadPolicy} from './upload-path.js';
 import { withToolClasses } from './tool-classes.js';
 import { buildFeatureSets, buildServerCapabilities, featureSetForTool, MESSAGING_FEATURE_SET } from './feature-sets.js';
 import { ChannelManager, mcplChannelId, parseMcplChannelId, toDescriptor } from './channels.js';
@@ -56,7 +57,7 @@ import {
   type AttachmentRef,
 } from './content.js';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, basename } from 'node:path';
 import { createRequire } from 'node:module';
 
 // tsx runs from src/; the built executable runs from dist/src/. Read the
@@ -126,6 +127,7 @@ export function backscrollBlock(
 }
 
 export class SlackMcplServer {
+  private readonly pathReader?: PathUploadReader;
   private conn: McplConnection | null = null;
   private mcplEnabled = false;
   private grant = new CapabilityGrant(buildFeatureSets());
@@ -192,13 +194,17 @@ export class SlackMcplServer {
    */
   constructor(
     private slack: SlackAdapter,
-    private opts: { subscribeMemberChannels?: boolean } = {},
+    private opts: { subscribeMemberChannels?: boolean; pathUploads?: PathUploadPolicy } = {},
   ) {
     // Once for the server's life: the adapter keeps every handler it's
     // given, and each forwards to whichever connection is being served, so
     // one per connection forwarded each message once per connection served.
+    if (opts.pathUploads !== undefined) this.pathReader = new PathUploadReader(opts.pathUploads);
     this.setupSlackForwarding();
   }
+
+  /** Release pinned upload roots and cancel local readers at process shutdown. */
+  close(): void { this.pathReader?.close(); }
 
   /**
    * Serve a single connection. Blocks until the connection closes, and
@@ -334,9 +340,10 @@ export class SlackMcplServer {
     try {
       switch (req.method) {
         case 'tools/list': {
-          const listed = this.slack.dmsWritable ? toolDefinitions : toolDefinitions.filter((t) => t.name !== 'send_dm');
+          const definitions = toolDefinitionsForPathUploads(this.pathReader?.policy);
+          const listed = this.slack.dmsWritable ? definitions : definitions.filter((t) => t.name !== 'send_dm');
           // MCPL RFC-008: each tool carries its class in _meta['mcpl/class'].
-          conn.sendResponse(req.id, { tools: withToolClasses(listed) });
+          conn.sendResponse(req.id, { tools: withToolClasses(listed, {pathUploads: this.pathReader?.policy}) });
           break;
         }
 
@@ -592,30 +599,42 @@ export class SlackMcplServer {
 
       case 'upload_file': {
         const channelId = this.requireString(args, 'channelId');
-        const filename = this.requireString(args, 'filename');
         const str = (k: string) => (typeof args[k] === 'string' && args[k] ? (args[k] as string) : undefined);
-        const text = args.content;
-        const b64 = args.contentBase64;
-        if ((text === undefined) === (b64 === undefined)) throw new Error('pass exactly one of content or contentBase64');
-        const input = text ?? b64;
-        if (typeof input !== 'string') throw new Error(`${text !== undefined ? 'content' : 'contentBase64'} must be a string`);
-        if (input.length === 0) throw new Error('file content is empty');
+        const path = args.path;
+        if (path !== undefined && !this.pathReader) throw new Error('Local path uploads are disabled; pass inline content');
+        let filename: string;
         let data: Buffer;
-        if (text !== undefined) {
-          data = Buffer.from(input, 'utf8');
+        if (path !== undefined) {
+          if ([path, args.content, args.contentBase64].filter((value) => value !== undefined).length !== 1) throw new Error('pass exactly one of path, content or contentBase64');
+          if (typeof path !== 'string') throw new Error('path must be a string');
+          filename = args.filename === undefined ? basename(path) : this.requireString(args, 'filename');
+          await this.slack.requireUploadDestination(channelId);
+          data = await this.pathReader!.read(path);
+          if (data.byteLength === 0) throw new Error('file content is empty');
         } else {
-          // Buffer.from is intentionally permissive: it skips punctuation and
-          // accepts data-URI prefixes as bytes. Require canonical RFC 4648
-          // base64, including padding and zero unused bits, before uploading.
-          if (input.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(input)) {
-            throw new Error('contentBase64 must be valid base64 (canonical RFC 4648 with padding; no data URI)');
+          filename = this.requireString(args, 'filename');
+          const text = args.content;
+          const b64 = args.contentBase64;
+          if ((text === undefined) === (b64 === undefined)) throw new Error('pass exactly one of content or contentBase64');
+          const input = text ?? b64;
+          if (typeof input !== 'string') throw new Error(`${text !== undefined ? 'content' : 'contentBase64'} must be a string`);
+          if (input.length === 0) throw new Error('file content is empty');
+          if (text !== undefined) {
+            data = Buffer.from(input, 'utf8');
+          } else {
+            // Buffer.from is intentionally permissive: it skips punctuation and
+            // accepts data-URI prefixes as bytes. Require canonical RFC 4648
+            // base64, including padding and zero unused bits, before uploading.
+            if (input.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(input)) {
+              throw new Error('contentBase64 must be valid base64 (canonical RFC 4648 with padding; no data URI)');
+            }
+            data = Buffer.from(input, 'base64');
+            if (data.toString('base64') !== input) {
+              throw new Error('contentBase64 must be valid base64 (canonical RFC 4648 with padding; no data URI)');
+            }
           }
-          data = Buffer.from(input, 'base64');
-          if (data.toString('base64') !== input) {
-            throw new Error('contentBase64 must be valid base64 (canonical RFC 4648 with padding; no data URI)');
-          }
+          if (data.byteLength > MAX_ATTACHMENT_BYTES) throw new Error(`inline file too large: ${data.byteLength} bytes (this server's inline limit is ${MAX_ATTACHMENT_BYTES})`);
         }
-        if (data.byteLength > MAX_ATTACHMENT_BYTES) throw new Error(`inline file too large: ${data.byteLength} bytes (this server's inline limit is ${MAX_ATTACHMENT_BYTES})`);
         const result = await this.slack.uploadFile(channelId, {
           filename, data, title: str('title'), comment: str('comment'), threadTs: str('messageId'),
         });

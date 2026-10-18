@@ -26,6 +26,7 @@ import {
   resolveSlackUserNames,
   fetchSlackHistory,
   classifyExtension,
+  MAX_ATTACHMENT_BYTES,
   reactionName,
   type AttachmentRef,
   type SlackHistoryMessage,
@@ -424,14 +425,21 @@ export class SlackAdapter {
 
   /** Upload a file (files.getUploadURLExternal + completeUploadExternal).
    *  Same write checks as sendMessage. Needs the files:write scope. */
+  /** Preflight before local file access; uploadFile repeats this before effects. */
+  async requireUploadDestination(channelId: string): Promise<void> {
+    this.assertWritable(channelId);
+    await this.assertNotDm(channelId);
+    if (!this.web.filesUploadV2) throw new Error('File upload is not available');
+  }
+
   async uploadFile(
     channelId: string,
     file: { filename: string; data: Buffer; title?: string; comment?: string; threadTs?: string },
   ): Promise<{ fileId: string }> {
-    this.assertWritable(channelId);
-    await this.assertNotDm(channelId);
-    if (!this.web.filesUploadV2) throw new Error('File upload is not available');
-    const result = await this.web.filesUploadV2({
+    if (!Buffer.isBuffer(file.data) || file.data.byteLength > MAX_ATTACHMENT_BYTES)
+      throw new Error('Upload data must be a bounded Buffer');
+    await this.requireUploadDestination(channelId);
+    const result = await this.web.filesUploadV2!({
       channel_id: channelId,
       file: file.data,
       filename: file.filename,

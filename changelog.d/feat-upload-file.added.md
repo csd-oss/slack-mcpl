@@ -4,7 +4,7 @@
   4648 base64, padded where required, without whitespace or a data-URI
   prefix). Empty content is refused. This server caps inline content
   at 5 MiB (5,242,880 bytes after encoding or decoding); it does not accept
-  filesystem paths. The same write rules as `send_message` apply
+  filesystem paths by default. The same write rules as `send_message` apply
   (`SLACK_SEND_CHANNELS`, `SLACK_DISABLE_DMS`), the tool is in the
   `slack.messaging` feature set and classed `comms`, and rollback attempts
   to delete uploads made after the checkpoint. **Operators:** the tool

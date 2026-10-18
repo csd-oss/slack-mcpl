@@ -1,3 +1,4 @@
+import type {PathUploadPolicy} from './upload-path.js';
 /**
  * MCP tool definitions and input types for Slack operations.
  * These tools work in both MCP and MCPL mode.
@@ -248,3 +249,24 @@ export const toolDefinitions: ToolDefinition[] = [
     },
   },
 ];
+
+/** Inline-only remains the default; path capability is operator configuration. */
+export function toolDefinitionsForPathUploads(policy?: PathUploadPolicy): ToolDefinition[] {
+  if (!policy) return toolDefinitions;
+  const boundary = policy.mode === 'restricted'
+    ? 'Only configured directories on the connector filesystem are admitted; symlinks below roots are refused.'
+    : 'The operator explicitly permits any regular file readable by the connector account; symlinks are allowed.';
+  return toolDefinitions.map(tool => tool.name !== 'upload_file' ? tool : {
+    ...tool,
+    description: 'Upload a file to Slack. Pass exactly one of path, content or contentBase64. All modes are capped at 5 MiB. ' + boundary,
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        ...tool.inputSchema.properties,
+        path: {type: 'string', description: 'Absolute regular-file path on the connector filesystem/account, not necessarily the agent host. ' + boundary},
+        filename: {type: 'string', description: 'Slack filename; required for inline data, defaults to basename for path uploads'},
+      },
+      required: ['channelId'],
+    },
+  });
+}
