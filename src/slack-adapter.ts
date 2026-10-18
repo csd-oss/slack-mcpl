@@ -840,8 +840,15 @@ export class SlackAdapter {
     // can't list them.
     const pinned: SlackConversationInfo[] = [];
     for (const id of this.accessPolicy?.historyMembershipFallbacks(this.scopes) ?? []) {
-      const info = await this.describeConversation(await this.readAccessConversation(id));
-      if (info) pinned.push(info);
+      // A pinned channel whose fresh proof fails (the bot left it, it was
+      // archived, Slack refused) is left out, fail-closed, and the listing
+      // goes on: one stale pin must not hide every other conversation.
+      try {
+        const info = await this.describeConversation(await this.readAccessConversation(id));
+        if (info) pinned.push(info);
+      } catch (err) {
+        console.error(`[slack-mcpl] Pinned conversation ${id} is not listed: ${(err as Error)?.message ?? String(err)}`);
+      }
     }
     let types = this.readableTypes();
     // Under the policy, a token whose scopes read no type lists only its

@@ -5,17 +5,21 @@ import { SlackAccessPolicy, HISTORY_MEMBERSHIP_PROOF } from '../src/access-polic
 
 const PIN = 'CPINNED', OWNER = 'UOWNER';
 const scopes = ['channels:history', 'chat:write', 'im:read', 'im:history', 'im:write', 'users:read', 'reactions:write'];
-function fixture(options: { scopes?: string[]; dmUsers?: string[]; fallback?: string[] } = {}) {
+function fixture(options: { scopes?: string[]; dmUsers?: string[]; fallback?: string[]; writeChannels?: string[] } = {}) {
   const calls: Array<{ method: string; args: any }> = [];
   const granted = [...(options.scopes ?? scopes)];
-  let history: any = { ok: true, messages: [] }, failure: Error | undefined;
+  let history: any = { ok: true, messages: [] }, failure: Error | undefined, failChannel: string | undefined;
   let info: any = { id: 'D1', is_im: true, user: OWNER };
   let listed: any[] = [];
   let handler: any;
   const record = (method: string, result = {}) => async (args: any) => { calls.push({ method, args }); return result; };
   const web = {
     conversations: {
-      history: async (args: any) => { calls.push({ method: 'history', args }); if (failure) throw failure; return history; },
+      history: async (args: any) => {
+        calls.push({ method: 'history', args });
+        if (failure && (!failChannel || args.channel === failChannel)) throw failure;
+        return history;
+      },
       info: async (args: any) => { calls.push({ method: 'info', args }); return { channel: info }; },
       list: async (args: any) => { calls.push({ method: 'list', args }); return { channels: listed }; },
       replies: record('replies', { messages: [] }), open: record('open', { channel: { id: 'D1' } }),
@@ -28,10 +32,10 @@ function fixture(options: { scopes?: string[]; dmUsers?: string[]; fallback?: st
     assistant: { threads: { setStatus: record('status') } },
   } as any;
   const adapter = new SlackAdapter(web, { on(_event, callback) { handler = callback; }, async start() {}, async disconnect() {} }, 'UBOT', 'workspace', undefined, undefined, false, 'eyes', granted);
-  adapter.configureAccessPolicy({ writeChannels: [PIN], dmUsers: options.dmUsers ?? [], readJoinedChannels: true,
+  adapter.configureAccessPolicy({ writeChannels: options.writeChannels ?? [PIN], dmUsers: options.dmUsers ?? [], readJoinedChannels: true,
     historyMembershipFallbackChannels: options.fallback ?? [PIN] });
   return { adapter, calls, granted,
-    fail(error?: Error) { failure = error; }, history(value: any) { history = value; }, info(value: any) { info = value; }, list(value: any[]) { listed = value; },
+    fail(error?: Error, channel?: string) { failure = error; failChannel = channel; }, history(value: any) { history = value; }, info(value: any) { info = value; }, list(value: any[]) { listed = value; },
     async emit() { handler({ event: { type: 'message', channel: PIN, channel_type: 'channel', user: OWNER, ts: '1.0', text: '<@UBOT> hi' }, ack: async () => {} }); await new Promise((resolve) => setTimeout(resolve, 0)); },
   };
 }
@@ -55,6 +59,17 @@ test('only pinned metadata is listed when no metadata listing scopes are availab
   const h = fixture({ scopes: ['channels:history', 'chat:write'] });
   assert.deepEqual((await h.adapter.listConversations(true)).conversations.map((item) => item.id), [PIN]);
   assert.deepEqual(h.calls.map((call) => call.method), ['history']);
+});
+
+test('a pinned channel whose proof fails is left out, and the others are still listed', async (t) => {
+  const errors = t.mock.method(console, 'error', () => {});
+  const h = fixture({ scopes: ['channels:history', 'chat:write'], writeChannels: ['CSTALE', PIN], fallback: ['CSTALE', PIN] });
+  h.fail(new Error('An API error occurred: not_in_channel'), 'CSTALE');
+  assert.deepEqual((await h.adapter.listConversations(true)).conversations.map((item) => item.id), [PIN]);
+  assert.deepEqual(h.calls.map((call) => `${call.method}:${call.args.channel}`), ['history:CSTALE', `history:${PIN}`]);
+  assert.match(String(errors.mock.calls.at(-1)?.arguments[0]), /CSTALE is not listed: .*not_in_channel/);
+  // Still fail-closed: the stale pin is not readable or writable meanwhile.
+  await assert.rejects(h.adapter.getConversationMeta('CSTALE'), /not_in_channel/);
 });
 
 test('allowed DM listing remains separate and never requests public/private types without their scopes', async () => {
