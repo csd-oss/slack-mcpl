@@ -93,7 +93,9 @@ async function fixture(api, {advanced=true,dmUsers=[],filePaths=true,scopeSet=sc
     }
   }
   adapter.onMessage(message=>messages.push(message));
-  const server=new api.SlackMcplServer(adapter,{subscribeMemberChannels:true,allowFilePaths:filePaths,
+  const server=new api.SlackMcplServer(adapter,{subscribeMemberChannels:true,
+    // Historical source keeps its old API; v2 must opt into unrestricted mode explicitly.
+    ...(api.isCandidate ? {pathUploads:filePaths?{mode:'unrestricted'}:undefined} : {allowFilePaths:filePaths}),
     ...(advanced?{disabledTools:['subscribe_channel','unsubscribe_channel']}:{})});
   const host=api.connectHost(server);
   const clientCapabilities={experimental:{mcpl:{version:'0.5'},
@@ -110,7 +112,7 @@ async function fixture(api, {advanced=true,dmUsers=[],filePaths=true,scopeSet=sc
     redirect(value){redirectResponse=value;},
     tool:async(name,args)=>host.host.sendRequest('tools/call',{name,arguments:args}),
     async emit(id,text,extra={}){callback({event:{type:'message',channel,channel_type:'channel',user:human,ts:id,text,...extra},ack:async()=>{}});await sleep(25);},
-    async close(){await host.close();await adapter.stop();adapter.routing?.close();globalThis.fetch=oldFetch;
+    async close(){await host.close();server.close?.();await adapter.stop();adapter.routing?.close();globalThis.fetch=oldFetch;
       for(const key of Object.keys(process.env)) if(!(key in previous)) delete process.env[key];Object.assign(process.env,previous);rmSync(dir,{recursive:true,force:true});},
   };
 }

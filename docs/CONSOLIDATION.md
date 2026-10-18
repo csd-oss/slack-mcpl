@@ -82,22 +82,25 @@ changes, and explicit merge-order guidance for companion host work.
    typed bridge with companion host/framework commits. Test both delivery lanes,
    context-only scheduling, frozen prose/status, queues, continuations and retries.
    Make the profile refuse activation when the bridge is absent or incompatible.
-5. **Optional filesystem path uploads, separately.** The local fork proposal
-   preserves the operator-approved behavior: `allowFilePaths: true` (CLI
-   `SLACK_ALLOW_FILE_PATHS=true`) enables bounded reads of regular files through
-   an open file descriptor, with symlinks allowed and no configured-directory
-   containment boundary. Ordinary OS permissions determine what it can read.
-   The default stays inline-only; enabled uploads remain capped at 5 MiB and
-   carry both `comms` and `files` classes. Keep this option out of the inline
-   #26 PR and map its local commit/test evidence separately.
+5. **Optional filesystem path uploads, separately.** The v1 evidence branch
+   records the original `a2a2015` local boolean opt-in with capped Node FD reads
+   but no directory containment. That is historical evidence, not the current
+   v2 API or a claim of restricted-path safety.
 
-   The #26 reviewer requested a narrower upstream path proposal: explicit
-   operator opt-in to a readable root, resolved containment including symlink
-   escape prevention, regular-file checks, the same size cap and both classes.
-   The missing containment is an **upstream approval blocker for the optional
-   path proposal**, not a claim that this local option implements it. Imposing
-   that new restriction would change the approved deployment behavior and needs
-   its own decision; consolidation must not silently add it.
+   The owner-approved v2 branch adopts the separate path PR's explicit
+   `pathUploads` / `SLACK_PATH_UPLOADS` policy: restricted directory capabilities
+   or an explicit unrestricted mode. The old boolean options produce migration
+   errors. Both modes retain the 5 MiB cap and `comms` + `files` classes, while
+   omission remains inline-only. The exact same reader is used in the separate
+   path proposal; restricted mode needs optional Python 3.9+ standard-library
+   support, pins roots, uses no-follow descriptor traversal, and checks the actual
+   file descriptor's path before and after reading. Unsupported confinement is
+   refused, never downgraded to unrestricted access. This is an adoption on a new
+   branch, not a rewrite of `a2a2015` or of v1's previous numerical evidence.
+
+   Path handlers preflight the destination before reading and revalidate it at
+   upload time. Generic access, DM, grants, disabled tools and recipient-host
+   safeguards stay composed. Keep this path proposal separate from inline #26.
 
 Pending #15/#29 work may require later composition tests because it changes ack,
 listing, registration or retry paths. Do not claim a clean historical merge-tree
@@ -240,7 +243,7 @@ No PR creation, branch publication or comment is performed by this plan.
 | New operator-pinned membership-proof PR | `ae6dc42` | Depends on access policy; explicit trusted public pin, fresh history proof, no scope manufacture or ID-prefix publicness claim. |
 | New optional recipient/provenance/dedup PR | `8dff5b0`, `1c09b7c`, connector/config portions of `15c60af` | Node 24 durable mode, typed options, private identity-bound receipts, generic policies; keep legacy startup at Node 22.12. |
 | Companion host contract and frozen targets | `74acea2`, remaining `15c60af`, `6808bbb`, `ff16866` | Must declare companion real host/framework work. Reconcile naming/semantics with open #20 RFC-011; do not assert this local extension is standard or that #20 is merged. Connector fail-closed handling can land before a real host is qualified. |
-| Separate optional bounded-path fork proposal | `a2a2015` | Depends on inline upload; disabled by default. Upstream review requested containment, which this parity-preserving OS-file option does not implement. Resolve that design before submitting it upstream; never restore old unbounded path handoff. |
+| Separate optional path fork proposal | `a2a2015` historical v1; explicit-mode adoption on v2 | Depends on inline upload; disabled by default. V2 adopts restricted-directory and explicit-unrestricted modes from the separate path proposal, sharing its descriptor-checked reader. Preserve v1 history and do not include this in inline #26. |
 | Documentation and test follow-ups | `ab6a1a1`, `ced6eac`, `d4bc353`, final evidence commit | Fold each document/test into its corresponding future PR; preserve numerical evidence and limitations. |
 
 Do not update fork main until the owner reviews this exact local diff and plan.
@@ -297,3 +300,16 @@ private identity is embedded in public test code. They fingerprint source inputs
 require a supplied manifest checksum, and write reports outside the repository.
 They do not independently certify arbitrary baseline source; the reconstruction
 and manifest evidence above provides that separate link for this review.
+
+## V2 explicit path-policy adoption
+
+`review/consolidated-connector-v1` remains at its prior evidence revision. The new
+`review/consolidated-path-uploads-v2` branch starts at `bb74c6b`, merges upstream
+`e1e1d7b` (test-only PR #30) additively, and replaces only the draft path API.
+Earlier counts and receipts in this document describe v1 and must not be reused
+as v2 test claims. The optional differential harness maps only the historical
+baseline to its old boolean API; the candidate explicitly selects unrestricted
+mode for that existing parity scenario. This does not enable a deployed service.
+
+See README for the current optional-Python contract, input policy and migration.
+No live source, token scopes, recipe, stored state or deployment was changed.

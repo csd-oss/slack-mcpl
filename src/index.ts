@@ -30,7 +30,7 @@
  *   SLACK_RECIPIENT_ROUTING - Optional: private stateFile/namespace/expectedBotUserId JSON;
  *                       requires explicit access policy and compatible MCPL host
  *   SLACK_DISABLED_TOOLS - Optional: comma-separated tool names to hide/refuse
- *   SLACK_ALLOW_FILE_PATHS - Optional: true enables bounded local path uploads
+ *   SLACK_PATH_UPLOADS - Optional: JSON restricted directories or explicit unrestricted mode
  */
 
 import * as net from 'node:net';
@@ -81,13 +81,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const disableDms = flag('SLACK_DISABLE_DMS');
-  const allowFilePaths = flag('SLACK_ALLOW_FILE_PATHS');
   const ackReaction = process.env.SLACK_ACK_REACTION?.replace(/:/g, '').trim() || undefined;
   const slack = await connectSlack({ botToken, appToken, dmUsers, sendChannels, disableDms, ackReaction,
     accessPolicy: optional.accessPolicy, recipientRouting: optional.recipientRouting });
   const server = new SlackMcplServer(slack, {
     subscribeMemberChannels: flag('SLACK_SUBSCRIBE_MEMBER_CHANNELS'),
-    allowFilePaths,
+    pathUploads: optional.pathUploads,
     disabledTools: optional.disabledTools,
   });
   await slack.start();
@@ -105,6 +104,7 @@ async function main(): Promise<void> {
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
+    server.close();
     setTimeout(() => process.exit(0), 5000).unref();
     void slack.stop().finally(() => process.exit(0));
   };

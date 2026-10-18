@@ -642,6 +642,13 @@ export class SlackAdapter {
     return { messageId: result.ts ? String(result.ts) : '' };
   }
 
+  /** Validate effects before a path reader opens local content; rechecked at upload. */
+  async requireUploadDestination(channelId: string): Promise<void> {
+    await this.requireWritableConversation(channelId, 'files:write');
+    await this.assertNotDm(channelId);
+    if (!this.web.filesUploadV2) throw new Error('File upload is not available');
+  }
+
   /** Upload a file (files.getUploadURLExternal + completeUploadExternal).
    *  Same write checks as sendMessage. Needs the files:write scope. */
   async uploadFile(
@@ -650,10 +657,8 @@ export class SlackAdapter {
   ): Promise<{ fileId: string }> {
     if (!Buffer.isBuffer(file.data)) throw new Error('File upload requires bounded bytes, not a raw path');
     if (file.data.byteLength > MAX_ATTACHMENT_BYTES) throw new Error('File upload exceeds the 5 MiB byte limit');
-    await this.requireWritableConversation(channelId, 'files:write');
-    await this.assertNotDm(channelId);
-    if (!this.web.filesUploadV2) throw new Error('File upload is not available');
-    const result = await this.web.filesUploadV2({
+    await this.requireUploadDestination(channelId);
+    const result = await this.web.filesUploadV2!({
       channel_id: channelId,
       file: file.data,
       filename: file.filename,

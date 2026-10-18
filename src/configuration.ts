@@ -2,7 +2,8 @@
  * parser, its diagnostics, examples or persisted routing state. */
 import {isAbsolute} from 'node:path';
 import {SlackAccessPolicy, type SlackAccessPolicyConfig} from './access-policy.js';
-import {toolDefinitionsForFilePaths} from './tools.js';
+import {toolDefinitionsForPathUploads} from './tools.js';
+import {validatePathUploadPolicy, type PathUploadPolicy} from './upload-path.js';
 
 export interface RecipientRoutingConfig {
   stateFile: string;
@@ -21,6 +22,14 @@ function object(value: unknown, keys: string[], name: string): Record<string, un
 }
 
 export function optionalConfiguration(env: Record<string, string | undefined>) {
+  if (env.SLACK_ALLOW_FILE_PATHS !== undefined) {
+    throw new Error('SLACK_ALLOW_FILE_PATHS was removed; configure SLACK_PATH_UPLOADS restricted directories or explicit unrestricted mode');
+  }
+  let pathUploads: PathUploadPolicy | undefined;
+  if (env.SLACK_PATH_UPLOADS !== undefined) {
+    try { pathUploads = validatePathUploadPolicy(JSON.parse(env.SLACK_PATH_UPLOADS)); }
+    catch { throw new Error('SLACK_PATH_UPLOADS must configure restricted directories or explicit unrestricted mode'); }
+  }
   let accessPolicy: SlackAccessPolicyConfig | undefined;
   if (env.SLACK_ACCESS_POLICY !== undefined) {
     const policy = object(json(env.SLACK_ACCESS_POLICY, 'SLACK_ACCESS_POLICY'),
@@ -41,7 +50,7 @@ export function optionalConfiguration(env: Record<string, string | undefined>) {
     recipientRouting = routing as unknown as RecipientRoutingConfig;
   }
   const disabledTools = env.SLACK_DISABLED_TOOLS?.split(',').map(name => name.trim()).filter(Boolean) ?? [];
-  const toolNames = new Set(toolDefinitionsForFilePaths().map(tool => tool.name));
+  const toolNames = new Set(toolDefinitionsForPathUploads().map(tool => tool.name));
   if (disabledTools.some(name => !toolNames.has(name))) throw new Error('SLACK_DISABLED_TOOLS names an unknown tool');
-  return {accessPolicy, recipientRouting, disabledTools};
+  return {accessPolicy, recipientRouting, disabledTools, pathUploads};
 }

@@ -77,14 +77,8 @@ with padding where required, and no whitespace or data-URI prefix). The
 content must be nonempty. This server limits inline content to 5 MiB
 (5,242,880 bytes), measured after UTF-8 encoding or base64 decoding; this is
 the server's inline limit, not Slack's file-size limit. The tool accepts
-inline content only by default. Embedded callers may explicitly set
-`new SlackMcplServer(adapter, { allowFilePaths: true })` to add a `path` option.
-It reads an absolute regular-file path through one nonblocking descriptor,
-checks the 5 MiB cap before and during the read, and gives bounded bytes to the
-Slack SDK. Symlinks are allowed; ordinary OS permissions apply and no directory
-boundary or sandbox is provided. In path mode, `filename` defaults to the
-path basename. With the option unset or false, `path` is neither advertised nor
-accepted. Inline validation and limits stay the same in either mode.
+inline content only by default. Operators may separately enable one explicit
+path-upload policy; see [Optional path uploads](#optional-path-uploads).
 
 Optional `messageId` selects the thread root (the message's `thread=` value,
 or its `id=` when it has no `thread=`). `title` names the
@@ -103,6 +97,82 @@ an existing Slack app, reinstall the app to the workspace through Slack's
 OAuth flow so the installed token receives the new scope. Editing the app's
 scope list alone does not update the token. Without the scope, Slack refuses
 uploads with `missing_scope`.
+
+### Optional path uploads
+
+Path uploads let an agent hand off an existing report, log or binary without
+reproducing its contents as text or base64 in the model's context. A `path` names
+a file on the **connector process's machine and filesystem**, which may differ
+from the host agent's machine. It does not upload a file from the agent's machine
+across a remote connector connection automatically.
+
+Path access is off unless the operator supplies `SLACK_PATH_UPLOADS` as JSON.
+There is no implicit boolean opt-in. Choose one mode explicitly:
+
+```sh
+# Read only through these directory capabilities.
+SLACK_PATH_UPLOADS='{"mode":"restricted","directories":["/srv/reports"]}' slack-mcpl --stdio
+
+# Explicitly permit any regular file the connector account can read.
+SLACK_PATH_UPLOADS='{"mode":"unrestricted"}' slack-mcpl --stdio
+```
+
+For an embedded server, the corresponding `SlackMcplServer` option is
+`pathUploads: {mode: 'restricted', directories: ['/srv/reports']}` or
+`pathUploads: {mode: 'unrestricted'}`. Leave the option unset to retain the
+inline-only tool. Both enabled modes add `path` to `upload_file`: pass exactly
+one of `path`, `content` or `contentBase64`. `path` must be absolute; `filename`
+is optional for a path and defaults to its basename. Inline content still needs
+an explicit `filename`. The tool is advertised as both `comms` and `files` when
+path access is enabled, and remains `comms` when inline-only.
+
+In **restricted** mode, configured roots must be existing absolute directories.
+The connector canonicalizes them and pins directory descriptors at startup; a
+configured root may itself be an alias to its canonical directory. This mode
+requires **Python 3.9 or newer** and supported descriptor-path facilities on
+Linux or macOS. A static Python standard-library worker runs with `-I -S` in a
+clean environment, without a shell or connector credentials. It opens each
+component relative to a directory descriptor with `O_NOFOLLOW`. All symlinks
+below a configured root are refused, including ones that point back inside it.
+The parent connector never changes its working directory.
+
+The worker checks the actual final file descriptor's path against the pinned
+root at admission, before reading, and again before returning any bytes. It uses
+Linux `/proc` descriptor paths or macOS `F_GETPATH`; directory names or a cwd
+ancestry check alone do not establish the final file's containment. No content
+is returned unless the checks pass. Missing Python, unsupported platform/path
+facilities or verification failure refuses the restricted read, with no downgrade
+to unrestricted access.
+
+In **unrestricted** mode, ordinary connector-account permissions determine which
+files can be read. Symlinks to regular files are allowed and there is no
+configured-directory boundary. Both modes refuse non-regular files, use a
+nonblocking open so a FIFO cannot wait for a writer, and enforce the same 5 MiB
+limit on the opened descriptor, including a bounded read if the file grows.
+The SDK receives the resulting bytes rather than a raw path. Inline-only and
+unrestricted modes remain Node-only and require no Python runtime.
+
+The existing send-channel and DM guards run before the local read and are checked
+again by the adapter before upload. They restrict the Slack destination, while
+the selected path mode governs local reads. Existing `files:write`, checkpoint
+and rollback behavior still applies; enabling paths does not grant a new Slack
+scope or bypass a denied destination.
+
+Pinned roots are directory capabilities, not immutable snapshots or an OS
+sandbox. Descriptor-path checks observe containment at the stated check points;
+they do not create an atomic, perpetual boundary during concurrent filesystem
+changes. File contents may change while being read. Restricted mode does not
+isolate hard links, privileged mounts or administrative renames. It also does
+not constrain a shell or another process with equivalent account/sudo access.
+Use OS account/filesystem permissions for those boundaries, and choose
+unrestricted mode only when that broader local-file access is intended.
+
+The previous local draft's `allowFilePaths` option and `SLACK_ALLOW_FILE_PATHS`
+boolean are removed. Setting the old CLI variable, including `false` or an empty
+value, fails with a migration error. Choose a policy explicitly; there is no
+silent migration to unrestricted access. Access profiles, disabled-tool settings,
+feature grants and recipient-host compatibility checks continue to apply.
+
 
 ## Explicit access policy
 
@@ -252,7 +322,7 @@ Switches take `true`/`false` (also `1`/`0`, `yes`/`no`); any other value stops t
 | `SLACK_ACCESS_POLICY` | no | Explicit JSON policy: `readJoinedChannels`, `writeChannels`, `dmUsers`, optional `historyMembershipFallbackChannels`. Omit to retain legacy controls. See the access-policy section above. |
 | `SLACK_RECIPIENT_ROUTING` | no | Opt-in JSON containing absolute private `stateFile`, installation `namespace`, optional `expectedBotUserId`. Requires explicit access policy, Node 24+ on POSIX, and a compatible recipient-aware MCPL host. |
 | `SLACK_DISABLED_TOOLS` | no | Comma-separated known tool names to hide and refuse, including direct invocation. For example, operators may disable subscription editing while retaining joined-channel ambient reads. |
-| `SLACK_ALLOW_FILE_PATHS` | no | Strict boolean, default false. Enables the separately documented bounded path-upload schema and `files` effect class. |
+| `SLACK_PATH_UPLOADS` | no | JSON `{ "mode": "restricted", "directories": ["/srv/reports"] }` or explicit `{ "mode": "unrestricted" }`; unset keeps inline-only. Restricted mode needs optional Python 3.9+ and supported descriptor-path facilities. The old `SLACK_ALLOW_FILE_PATHS` variable is rejected. |
 
 ## Optional recipient-aware mode
 

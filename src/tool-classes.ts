@@ -1,3 +1,4 @@
+import type {PathUploadPolicy} from './upload-path.js';
 /**
  * Tool classes — MCPL RFC-008
  * (https://github.com/anima-research/mcpl/blob/main/RFC-008-tool-classes.md).
@@ -61,11 +62,11 @@ export const UNCLASSED: ReadonlySet<string> = new Set<string>();
  *  keys. Unclassed tools are returned as they are. */
 export function withToolClasses<T extends { name: string; _meta?: Record<string, unknown> }>(
   tools: readonly T[],
-  opts: { allowFilePaths?: boolean } = {},
+  opts: {pathUploads?: PathUploadPolicy} = {},
 ): T[] {
   return tools.map((tool) => {
     if (!Object.hasOwn(TOOL_CLASSES, tool.name)) return tool;
-    const classes = tool.name === 'upload_file' && opts.allowFilePaths ? ['comms', 'files'] : TOOL_CLASSES[tool.name];
+    const classes = tool.name === 'upload_file' && opts.pathUploads ? ['comms', 'files'] : TOOL_CLASSES[tool.name];
     return { ...tool, _meta: { ...tool._meta, 'mcpl/class': [...classes] } };
   });
 }

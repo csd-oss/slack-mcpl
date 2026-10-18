@@ -40,7 +40,7 @@ import type {
 } from '@animalabs/mcpl-core';
 
 import type { SlackAdapter, SlackMessageData } from './slack-adapter.js';
-import { toolDefinitionsForFilePaths } from './tools.js';
+import { toolDefinitionsForPathUploads } from './tools.js';
 import {RECIPIENT_CAPABILITY, requireRecipientCapability} from './host-compatibility.js';
 import { withToolClasses } from './tool-classes.js';
 import { buildFeatureSets, buildServerCapabilities, featureSetForTool, MESSAGING_FEATURE_SET } from './feature-sets.js';
@@ -50,7 +50,7 @@ import { CapabilityGrant } from './grant.js';
 import { McplRpcError, capabilityDenied } from './errors.js';
 import { explainSlackError } from './slack-errors.js';
 import { associatedFileUrl } from './file-access.js';
-import { readUploadPath } from './upload-path.js';
+import {PathUploadReader, type PathUploadPolicy} from './upload-path.js';
 import {
   fetchAttachmentBytes,
   MAX_ATTACHMENT_BYTES,
@@ -129,6 +129,7 @@ export function backscrollBlock(
 }
 
 export class SlackMcplServer {
+  private readonly pathReader?: PathUploadReader;
   private conn: McplConnection | null = null;
   private mcplEnabled = false;
   private grant = new CapabilityGrant(buildFeatureSets());
@@ -200,16 +201,21 @@ export class SlackMcplServer {
    */
   constructor(
     private slack: SlackAdapter,
-    private opts: { subscribeMemberChannels?: boolean; allowFilePaths?: boolean; disabledTools?: readonly string[] } = {},
+    private opts: { subscribeMemberChannels?: boolean; pathUploads?: PathUploadPolicy; disabledTools?: readonly string[] } = {},
   ) {
     // Once for the server's life: the adapter keeps every handler it's
     // given, and each forwards to whichever connection is being served, so
     // one per connection forwarded each message once per connection served.
-    const names = new Set(toolDefinitionsForFilePaths(opts.allowFilePaths).map(tool => tool.name));
+    if ('allowFilePaths' in opts) throw new Error('allowFilePaths was removed; configure pathUploads explicitly');
+    const names = new Set(toolDefinitionsForPathUploads(opts.pathUploads).map(tool => tool.name));
     if (opts.disabledTools?.some(name => !names.has(name))) throw new Error('Unknown disabled tool');
     this.opts = {...opts, disabledTools: [...(opts.disabledTools ?? [])]};
+    if (opts.pathUploads !== undefined) this.pathReader = new PathUploadReader(opts.pathUploads);
     this.setupSlackForwarding();
   }
+
+  /** Release pinned upload roots and cancel local readers at process shutdown. */
+  close(): void { this.pathReader?.close(); }
 
   /**
    * Serve a single connection. Blocks until the connection closes, and
@@ -356,14 +362,14 @@ export class SlackMcplServer {
     try {
       switch (req.method) {
         case 'tools/list': {
-          const definitions = toolDefinitionsForFilePaths(this.opts.allowFilePaths);
+          const definitions = toolDefinitionsForPathUploads(this.pathReader?.policy);
           const listed = (this.slack.dmsWritable ? definitions : definitions.filter((t) => t.name !== 'send_dm'))
             .filter(tool => !this.opts.disabledTools?.includes(tool.name))
             .map((tool) => this.slack.hasExplicitAccessPolicy && tool.name === 'fetch_attachment'
               ? { ...tool, inputSchema: { ...tool.inputSchema, required: ['channelId', 'fileId'] } }
               : tool);
           // MCPL RFC-008: each tool carries its class in _meta['mcpl/class'].
-          conn.sendResponse(req.id, { tools: withToolClasses(listed, this.opts) });
+          conn.sendResponse(req.id, { tools: withToolClasses(listed, {pathUploads: this.pathReader?.policy}) });
           break;
         }
 
@@ -645,14 +651,16 @@ export class SlackMcplServer {
         const channelId = this.requireString(args, 'channelId');
         const str = (k: string) => (typeof args[k] === 'string' && args[k] ? (args[k] as string) : undefined);
         const path = args.path;
-        if (path !== undefined && !this.opts.allowFilePaths) throw new Error('Local path uploads are disabled; pass inline content');
+        if (path !== undefined && !this.pathReader) throw new Error('Local path uploads are disabled; pass inline content');
         let filename: string;
         let data: Buffer;
         if (path !== undefined) {
           if ([path, args.content, args.contentBase64].filter((value) => value !== undefined).length !== 1) throw new Error('pass exactly one of path, content or contentBase64');
           if (typeof path !== 'string') throw new Error('path must be a string');
-          data = await readUploadPath(path);
           filename = args.filename === undefined ? basename(path) : this.requireString(args, 'filename');
+          await this.slack.requireUploadDestination(channelId);
+          data = await this.pathReader!.read(path);
+          if (data.byteLength === 0) throw new Error('file content is empty');
         } else {
           filename = this.requireString(args, 'filename');
           const text = args.content;

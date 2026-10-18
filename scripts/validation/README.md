@@ -66,3 +66,11 @@ Keep historical inputs and generated reports outside this repository. Results
 qualify the named synthetic cases, not every possible Slack event or a real
 host deployment. A host advertising the capability still needs separate review
 of its storage, wake gating, provenance, and frozen-target integration.
+
+## V2 path-policy adapter
+
+The current candidate uses `pathUploads: {mode: 'unrestricted'}` explicitly for
+its historical unrestricted-path comparison. Only the historical baseline keeps
+its original `allowFilePaths` test API. The candidate default remains inline-only;
+restricted-directory behavior has separate reader and handler tests. Historical
+v1 receipts remain historical and are not renamed as v2 results.

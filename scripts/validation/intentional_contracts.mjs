@@ -79,24 +79,24 @@ try{
     assert.throws(()=>new RoutingLedger(join(dir,'unsupported.sqlite'),'UBOT','installation.alpha',policy),/Node 24/);
     results.push({name:'advanced routing refuses unsupported Node major',passed:true});
   }
-  for(const allowFilePaths of [false,true]){
+  for(const pathEnabled of [false,true]){
     const uploads=[];
     const adapter=new SlackAdapter({filesUploadV2:async(args)=>{uploads.push(args);return{files:[{files:[{id:'FFILE'}]}]};}} ,
       {on(){}},'UBOT','fixture');
-    const server=new SlackMcplServer(adapter,allowFilePaths?{allowFilePaths:true}:{});
+    const server=new SlackMcplServer(adapter,pathEnabled?{pathUploads:{mode:'unrestricted'}}:{});
     const h=harness.connectHost(server);
     try{
       await harness.initialize(h,false);
       const tools=await h.host.sendRequest('tools/list',{});
       const upload=tools.tools.find(tool=>tool.name==='upload_file');
-      assert.equal(!!upload.inputSchema.properties.path,allowFilePaths);
+      assert.equal(!!upload.inputSchema.properties.path,pathEnabled);
       const path=join(dir,'fixture.txt');writeFileSync(path,'synthetic fixture');
       const result=await h.host.sendRequest('tools/call',{name:'upload_file',arguments:{channelId:'CONE',path}});
-      assert.equal(result.isError===true,!allowFilePaths);
-      assert.equal(uploads.length,allowFilePaths?1:0);
-      if(allowFilePaths){assert.ok(Buffer.isBuffer(uploads[0].file));assert.equal(uploads[0].file.toString(),'synthetic fixture');}
-      results.push({name:allowFilePaths?'explicit bounded local-path opt-in':'default local paths absent and refused',passed:true});
-    }finally{await h.close();await adapter.stop();}
+      assert.equal(result.isError===true,!pathEnabled);
+      assert.equal(uploads.length,pathEnabled?1:0);
+      if(pathEnabled){assert.ok(Buffer.isBuffer(uploads[0].file));assert.equal(uploads[0].file.toString(),'synthetic fixture');}
+      results.push({name:pathEnabled?'explicit bounded local-path opt-in':'default local paths absent and refused',passed:true});
+    }finally{await h.close();server.close();await adapter.stop();}
   }
   writeFileSync(output,JSON.stringify({node:process.version,results,summary:{passed:results.length,failed:0}},null,2)+'\n');
   console.log(JSON.stringify({node:process.version,passed:results.length,failed:0,report:output}));
