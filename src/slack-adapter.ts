@@ -40,9 +40,10 @@ const ACK_TTL_MS = 10 * 60 * 1000;
  *  this, at most ACK_MAX_TRIES times in all. */
 const ACK_RETRY_MS = 60 * 1000;
 const ACK_MAX_TRIES = 5;
-/** Slack's answers to an acknowledgement's add after which it may be there:
- *  already_reacted, and the failures the explainer calls an unknown outcome. */
-const MAY_HAVE_LANDED = new Set(['already_reacted', 'internal_error', 'fatal_error', 'service_unavailable']);
+/** Slack's answers to a write after which it may have taken effect:
+ *  already_reacted, to an acknowledgement's add, and the failures the
+ *  explainer calls an unknown outcome. */
+const MAY_HAVE_LANDED = new Set(['already_reacted', 'internal_error', 'fatal_error', 'service_unavailable', 'file_update_failed']);
 
 type AckEntry = {
   timer: ReturnType<typeof setTimeout>;
@@ -285,12 +286,71 @@ export class OutOfCallTime extends Error {
  *  it. */
 const failedRequests = new WeakMap<object, string>();
 
-/** The Web API method of the request `err` came from: OutOfCallTime's own, or
- *  the one SlackWebClient marked it with; undefined for an error no request of
- *  SlackWebClient's threw. */
+/** The request `err` came from: the Web API method SlackWebClient marked it
+ *  with, or OutOfCallTime's own, which names a Web API method or what else the
+ *  request was, such as an upload's bytes; undefined for an error no request
+ *  of SlackWebClient's threw. */
 export function failedRequest(err: unknown): string | undefined {
   if (err instanceof OutOfCallTime) return err.method;
   return err !== null && typeof err === 'object' ? failedRequests.get(err) : undefined;
+}
+
+/** The file an upload left when it failed after its first step, and whether
+ *  Slack may have shared it. */
+export interface FileLeft {
+  fileId: string;
+  mayHaveShared: boolean;
+}
+const filesLeft = new WeakMap<object, FileLeft>();
+
+/** The file an upload left when it failed after its first step, which a
+ *  rollback deletes too, and whether Slack may have shared it; undefined for
+ *  any other error. */
+export function fileLeftByUpload(err: unknown): FileLeft | undefined {
+  return err !== null && typeof err === 'object' ? filesLeft.get(err) : undefined;
+}
+
+/** Whether a request's failure leaves it undone: the call's time left no room
+ *  to send it, the connection to Slack was never made, or Slack refused it or
+ *  rate-limited it. A failure Slack says may have taken effect
+ *  (MAY_HAVE_LANDED), an HTTP error, a timeout or a connection that failed
+ *  once made doesn't say. */
+function cannotHaveLanded(err: unknown): boolean {
+  if (err instanceof OutOfCallTime) return true;
+  const e = err as { code?: unknown; original?: { code?: unknown }; data?: { error?: unknown } } | null;
+  if (e?.code === ErrorCode.RequestError) return connectionNeverMade(e.original?.code);
+  if (e?.code === ErrorCode.RateLimitedError) return true;
+  return e?.code === ErrorCode.PlatformError && typeof e.data?.error === 'string' && !MAY_HAVE_LANDED.has(e.data.error);
+}
+
+/** An upload's last step answered without the file: whether Slack shared it
+ *  can't be told. */
+export class UploadNotConfirmed extends Error {
+  constructor(readonly fileId: string) {
+    super(`files.completeUploadExternal: the answer named no file ${fileId}`);
+    this.name = 'UploadNotConfirmed';
+  }
+}
+
+/** A post of a file's bytes to Slack's upload server that failed: its timeout
+ *  ran out (`TimeoutError`), the connection failed (`transit`), or the server
+ *  answered with this HTTP status. The bytes may have reached the server, but
+ *  Slack shares a file only at the upload's last step, so nothing was shared. */
+export class UploadBytesFailed extends Error {
+  constructor(readonly why: 'TimeoutError' | 'transit' | number) {
+    super(`The upload of the file's bytes: ${why === 'TimeoutError' ? 'timed out' : why === 'transit' ? 'the connection failed' : `HTTP ${why}`}`);
+    this.name = 'UploadBytesFailed';
+  }
+}
+
+/** The ts of the message that shared `file` in `channelId`, from
+ *  files.completeUploadExternal's answer, if it names one. */
+function sharingTs(file: SlackUploadedFile, channelId: string): string | undefined {
+  for (const where of [file.shares?.public, file.shares?.private]) {
+    const ts = where?.[channelId]?.[0]?.ts;
+    if (typeof ts === 'string' && ts) return ts;
+  }
+  return undefined;
 }
 
 /** The start rule for every request a request from the host makes, made
@@ -334,8 +394,8 @@ export function assertRequestFits(method: string, requestMs: number): void {
  * A request made outside a request from the host has no deadline and answers a
  * rate limit at once. The client binds each of its methods to apiCall as it's
  * built (`dist/methods.js`, bindApiCall), so this override reaches every Web
- * API method call. filesUploadV2's upload of a file's bytes is the one request
- * the client makes without it (`makeRequest`, `dist/WebClient.js`).
+ * API method call. An upload's bytes go out with fetch, outside the client,
+ * under the same start rule (postFileBytes).
  */
 export class SlackWebClient extends WebClient {
   /** Each request's timeout, in ms: the longest a request can take. */
@@ -447,6 +507,13 @@ export async function connectSlack(config: SlackAdapterConfig, slackApiUrl?: str
   );
 }
 
+/** A file as files.completeUploadExternal's answer describes it: `shares` names
+ *  the messages that shared it, by conversation. */
+export interface SlackUploadedFile {
+  id?: string;
+  shares?: { public?: Record<string, Array<{ ts?: string }>>; private?: Record<string, Array<{ ts?: string }>> };
+}
+
 /** The client surfaces the adapter needs — structural, so tests can inject fakes. */
 export interface SlackWebLike {
   conversations: {
@@ -464,6 +531,11 @@ export interface SlackWebLike {
   reactions: {
     add(args: { channel: string; timestamp: string; name: string }): Promise<unknown>;
     remove(args: { channel: string; timestamp: string; name: string }): Promise<unknown>;
+  };
+  files: {
+    getUploadURLExternal(args: { filename: string; length: number }): Promise<{ upload_url?: string; file_id?: string }>;
+    completeUploadExternal(args: Record<string, unknown>): Promise<{ files?: SlackUploadedFile[] }>;
+    delete(args: { file: string }): Promise<unknown>;
   };
   users: {
     info(args: { user: string }): Promise<{ user?: { profile?: { display_name?: string }; real_name?: string; name?: string } }>;
@@ -774,6 +846,87 @@ export class SlackAdapter {
     return { messageId: result.ts ? String(result.ts) : '' };
   }
 
+  /** Upload a file into a conversation, in the three steps of Slack's
+   *  working-with-files page: files.getUploadURLExternal gives an upload URL
+   *  and the file's ID, the file's bytes go to that URL, and
+   *  files.completeUploadExternal shares the file. Same write checks as
+   *  sendMessage. Needs the files:write scope.
+   *
+   *  A file is shared only at the last step, so a failure before it shared
+   *  nothing. Once the first step has given the file its ID, a failure leaves
+   *  that file on its error (fileLeftByUpload) for rollback, with whether
+   *  Slack may have shared it: only if the last step's own request may have
+   *  taken effect. An answer that names no file throws UploadNotConfirmed,
+   *  whose file rides on it the same way, possibly shared. `shareTs` is the
+   *  message that shared the file, when the answer names it: it holds the
+   *  comment, which rollback deletes after the file. */
+  async uploadFile(
+    channelId: string,
+    file: { filename: string; data: Buffer; title?: string; comment?: string; threadTs?: string },
+  ): Promise<{ fileId: string; shareTs?: string }> {
+    this.assertWritable(channelId);
+    await this.assertNotDm(channelId);
+    const target = await this.web.files.getUploadURLExternal({ filename: file.filename, length: file.data.byteLength });
+    const url = target.upload_url;
+    const fileId = target.file_id;
+    if (typeof fileId !== 'string' || !fileId) {
+      throw new Error("files.getUploadURLExternal: Slack's answer gave no file ID, so nothing was uploaded");
+    }
+    // Slack gave the file its ID at the first step, so whatever fails from
+    // here leaves that file for a rollback to delete. Only the last step's
+    // own request can have shared it.
+    const left = (err: unknown, mayHaveShared: boolean): unknown => {
+      if (err !== null && typeof err === 'object') filesLeft.set(err, { fileId, mayHaveShared });
+      return err;
+    };
+    if (typeof url !== 'string' || !url) {
+      throw left(new Error("files.getUploadURLExternal: Slack's answer gave no upload URL, so nothing was uploaded"), false);
+    }
+    try {
+      await this.postFileBytes(url, file.data);
+    } catch (err) {
+      throw left(err, false);
+    }
+    let answer: Awaited<ReturnType<SlackWebLike['files']['completeUploadExternal']>>;
+    try {
+      answer = await this.web.files.completeUploadExternal({
+        files: [{ id: fileId, title: file.title ?? file.filename }],
+        channel_id: channelId,
+        ...(file.comment ? { initial_comment: file.comment } : {}),
+        ...(file.threadTs ? { thread_ts: file.threadTs } : {}),
+      });
+    } catch (err) {
+      throw left(err, !cannotHaveLanded(err));
+    }
+    const shared = answer.files?.find((f) => f.id === fileId);
+    if (!shared) throw left(new UploadNotConfirmed(fileId), true);
+    // The working reaction comes off whatever time the call has left, as a
+    // sent message's does.
+    void outsideCallTime(() => this.clearAck(channelId));
+    return { fileId, shareTs: sharingTs(shared, channelId) };
+  }
+
+  /** Posts a file's bytes to the upload URL Slack gave, as Slack's
+   *  working-with-files page does: the bytes as the body. Like every request a
+   *  call makes, it keeps the start rule and the client's timeout, which
+   *  covers the whole post. The URL needs no token. */
+  private async postFileBytes(url: string, data: Buffer): Promise<void> {
+    assertRequestFits("The upload of the file's bytes", SLACK_CLIENT_OPTIONS.timeout);
+    try {
+      const answer = await fetch(url, {
+        method: 'POST',
+        body: data,
+        headers: { 'content-type': 'application/octet-stream' },
+        signal: AbortSignal.timeout(SLACK_CLIENT_OPTIONS.timeout),
+      });
+      await answer.arrayBuffer();
+      if (!answer.ok) throw new UploadBytesFailed(answer.status);
+    } catch (err) {
+      if (err instanceof UploadBytesFailed) throw err;
+      throw new UploadBytesFailed((err as { name?: unknown } | null)?.name === 'TimeoutError' ? 'TimeoutError' : 'transit');
+    }
+  }
+
   /** With SLACK_DISABLE_DMS, only a conversation Slack confirmed to be a
    *  channel may be written to or read. Every write path and both history
    *  reads call this. An ID is not enough: a group DM ID looks like a channel
@@ -823,6 +976,14 @@ export class SlackAdapter {
     this.assertWritable(channelId);
     await this.assertNotDm(channelId);
     await this.web.chat.delete({ channel: channelId, ts });
+  }
+
+  /** Deletes a file this bot uploaded, with the same write checks as a
+   *  message's delete. */
+  async deleteFile(channelId: string, fileId: string): Promise<void> {
+    this.assertWritable(channelId);
+    await this.assertNotDm(channelId);
+    await this.web.files.delete({ file: fileId });
   }
 
   async addReaction(channelId: string, ts: string, emoji: string): Promise<void> {
