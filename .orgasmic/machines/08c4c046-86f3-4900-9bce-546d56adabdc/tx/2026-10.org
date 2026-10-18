@@ -15,3 +15,16 @@
 :TRIGGERS:     none
 :EVENT_ID:     74eb97a1-77e4-43a3-b5ca-28746aee8ccd
 :END:
+
+* TX 2026-10-18 Sun 11:31:07 manager.action CONV-P8129
+:PROPERTIES:
+:TX_ID:        tx-20261018-slack-24319845-6d7e-415a-a69b-d01589b03a92
+:TIME:         [2026-10-18 Sun 11:31:07]
+:TYPE:         manager.action
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      slack-mcpl-history-review
+:TASK:         CONV-P8129
+:REASON:       Exact requested claude/acp model=claude-opus-5-5 effort=high refused in dry-run: last live model catalog lacks that model ID. No reviewer run started and no alias/model/route substitution was made.
+:EVENT_ID:     81f4cb77-3a09-4046-a140-aa6d2a5db652
+:END:
