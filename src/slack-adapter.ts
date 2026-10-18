@@ -25,6 +25,7 @@ import { SocketModeClient } from '@slack/socket-mode';
 import { SlackAccessPolicy, HISTORY_MEMBERSHIP_PROOF, type SlackAccessPolicyConfig } from './access-policy.js';
 import {RoutingLedger, type AccessAdmission, type RoutingReceipt, type SenderKind} from './recipient-routing.js';
 import type {RecipientRoutingConfig} from './configuration.js';
+import {BoundedHistoryReader, historyRecord, type ReadRequest, type SlackReadCall} from './history-read.js';
 import {
   formatSlackText,
   extractSlackUserIds,
@@ -201,6 +202,13 @@ export async function connectSlack(config: SlackAdapterConfig): Promise<SlackAda
     config.ackReaction,
     // Granted scopes, from the x-oauth-scopes header of auth.test.
     (auth.response_metadata as { scopes?: string[] } | undefined)?.scopes,
+    // Isolate tool-read deadlines/retries from the legacy messaging client.
+    // AbortSignal reaches Axios through the SDK's supported interceptor.
+    async (method, args, signal) => await new WebClient(config.botToken, {
+      retryConfig: {retries: 0}, rejectRateLimitedCalls: true,
+      attachOriginalToWebAPIRequestError: false,
+      requestInterceptor: request => { request.signal = signal; return request; },
+    }).apiCall(method, args) as unknown as Record<string, unknown>,
   );
   if (config.accessPolicy) adapter.configureAccessPolicy(config.accessPolicy);
   if (config.recipientRouting) adapter.configureRecipientRouting(config.recipientRouting);
@@ -255,6 +263,7 @@ export class SlackAdapter {
   private accessPolicy?: SlackAccessPolicy;
   /** Lets file helpers select strict association checks without exposing policy. */
   get hasExplicitAccessPolicy(): boolean { return this.accessPolicy !== undefined; }
+  private historyReader: BoundedHistoryReader;
   private userNameCache = new Map<string, string>();
   private messageHandlers: Array<(msg: SlackMessageData) => void> = [];
   private socketStarted = false;
@@ -287,6 +296,7 @@ export class SlackAdapter {
     private ackReaction?: string,
     /** The bot token's scopes; undefined = unknown, ask for every type. */
     private scopes?: string[],
+    readCall?: SlackReadCall,
   ) {
     if (this.scopes) {
       const omitted = this.conversationTypes().filter((type) => !this.scopes!.includes(TYPE_SCOPE[type]));
@@ -294,6 +304,22 @@ export class SlackAdapter {
         console.error(`[slack-mcpl] Conversation listing omits types without a granted read scope: ${omitted.map((type) => `${type} (requires ${TYPE_SCOPE[type]})`).join(', ')}.`);
       }
     }
+    this.historyReader = new BoundedHistoryReader(readCall ?? (async (method, args) => {
+      const operation = method.slice('conversations.'.length) as 'info' | 'history' | 'replies';
+      return this.web.conversations[operation](args as {channel: string}) as Promise<Record<string, unknown>>;
+    }), id => this.canWrite(id), this.userNameCache, () => !this.accessPolicy && this.disableDms, () => performance.now(), {
+      authorize: async (id, request) => this.accessPolicy
+        ? await this.requireHistoryConversation(id, request) as unknown as Record<string, unknown> : undefined,
+      render: (raw, id) => {
+        const record = historyRecord(raw, this.userNameCache);
+        if (!this.accessPolicy) return record;
+        return {...record, channelId: id, ...(raw.files?.length ? {attachments: raw.files.map(file => {
+          const fileId = typeof file.id === 'string' && /^F[A-Z0-9]+$/.test(file.id) ? file.id : undefined;
+          return `${file.name ?? 'attachment'}${file.mimetype ? ` (${file.mimetype})` : ''}` +
+            (fileId ? ` — fetch_attachment(${JSON.stringify({channelId: id, fileId})})` : ' — not downloadable: Slack file ID is missing');
+        })} : {})};
+      },
+    });
     // Register the handler at construction so start() ordering can't race
     // an early event past an unregistered listener.
     this.socket.on('message', ({ event, ack }) => {
@@ -418,7 +444,7 @@ export class SlackAdapter {
     return this.describeConversation((info.channel ?? {}) as SlackApiConversation);
   }
 
-  private async readAccessConversation(channelId: string): Promise<SlackApiConversation> {
+  private async readAccessConversation(channelId: string, request?: ReadRequest): Promise<SlackApiConversation> {
     if (!this.accessPolicy) throw new Error('Slack access policy is not configured');
     if (!/^[CGD][A-Z0-9]+$/.test(channelId)) throw new Error('Invalid Slack conversation ID');
     if (!Array.isArray(this.scopes)) throw new Error('Slack scope metadata is unavailable');
@@ -426,7 +452,8 @@ export class SlackAdapter {
       this.accessPolicy.requireScope(this.scopes, 'channels:history');
       // Bot tokens can read history only for conversations they belong to.
       // Never cache this proof or add channels:read to reported token scopes.
-      const result = await this.web.conversations.history({ channel: channelId, limit: 1 });
+      const result = request ? await request('conversations.history', {channel: channelId, limit: 1})
+        : await this.web.conversations.history({ channel: channelId, limit: 1 });
       if (result.ok !== true) throw new Error(`Could not freshly confirm membership of ${channelId}`);
       const conversation: SlackApiConversation & { [HISTORY_MEMBERSHIP_PROOF]: true } = {
         id: channelId, name: channelId, is_im: false, is_mpim: false,
@@ -435,7 +462,8 @@ export class SlackAdapter {
       this.accessPolicy.requireReadable(channelId, conversation, this.scopes);
       return conversation;
     }
-    const result = await this.web.conversations.info({ channel: channelId });
+    const result = request ? await request('conversations.info', {channel: channelId})
+      : await this.web.conversations.info({ channel: channelId });
     const conversation = result.channel as SlackApiConversation | undefined;
     this.accessPolicy.requireReadable(channelId, conversation, this.scopes);
     return conversation!;
@@ -447,9 +475,9 @@ export class SlackAdapter {
     await this.assertNotDm(channelId);
   }
 
-  private async requireHistoryConversation(channelId: string): Promise<SlackApiConversation | undefined> {
+  private async requireHistoryConversation(channelId: string, request?: ReadRequest): Promise<SlackApiConversation | undefined> {
     if (!this.accessPolicy) { await this.assertNotDm(channelId); return; }
-    const conversation = await this.readAccessConversation(channelId);
+    const conversation = await this.readAccessConversation(channelId, request);
     this.accessPolicy.requireScope(this.scopes, conversation.is_im ? 'im:history' : conversation.is_private ? 'groups:history' : 'channels:history');
     return conversation;
   }
@@ -768,6 +796,15 @@ export class SlackAdapter {
   }
 
   // ── History ──
+
+  /** The bounded public tool contract; backscroll/unread keep fetchHistory. */
+  readHistory(channelId: string, args: Record<string, unknown>) {
+    return this.historyReader.read('history', channelId, args);
+  }
+
+  readThread(channelId: string, threadTs: string, args: Record<string, unknown>) {
+    return this.historyReader.read('thread', channelId, args, threadTs);
+  }
 
   /** Channel-level history, oldest-first. Thread replies are NOT included
    *  (Slack requires conversations.replies per thread — see fetchThread). */

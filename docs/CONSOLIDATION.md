@@ -171,6 +171,13 @@ identity follows from consolidating source.
 
 ## Recommended history and search PR plan
 
+The stage-one history work from upstream PR #32 is now integrated into this
+fork: bounded filtering/continuation, author/root/reply metadata and channel
+policy observations are implemented. The merge retains explicit access-policy
+admission and protected attachment references. This records source integration,
+not a deployment. The original planning record below describes the prior
+proposal; native search, regex and bulk thread expansion remain separate.
+
 These are proposals for reusable features suggested by historical agent work.
 They are not implemented by this documentation change, part of the current host
 ABI, or authorization to import an agent's history. Use separate small PRs with

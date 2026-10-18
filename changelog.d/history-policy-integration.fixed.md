@@ -1,0 +1,1 @@
+- Preserve explicit access-policy admission, fresh pinned-channel membership proof and authorized attachment references in bounded history/thread reads. Membership-proof work counts toward the read's page/deadline budget; cursor resumption never bypasses policy checks.

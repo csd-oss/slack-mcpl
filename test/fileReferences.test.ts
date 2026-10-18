@@ -77,7 +77,7 @@ test('normal history and thread tool responses retain Slack file IDs and supply 
   assert.equal(raw.messages[0].attachments[0].fileId, 'FHISTORY');
   assert.equal(raw.messages[0].attachments[1].fileId, undefined);
   for (const name of ['fetch_history', 'fetch_thread']) {
-    const result = await h.call(name, { channelId: 'C1', threadTs: '100.1' });
+    const result = await h.call(name, { channelId: 'C1', ...(name === 'fetch_thread' ? {threadTs: '100.1'} : {}) });
     assert.notEqual(result.isError, true);
     const body = JSON.parse(result.content[0].text);
     assert.equal(body.messages[0].channelId, 'C1');
