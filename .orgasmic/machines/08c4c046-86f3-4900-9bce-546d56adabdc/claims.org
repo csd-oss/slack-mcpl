@@ -1,0 +1,19 @@
+#+title: orgasmic tx claims
+#+orgasmic_version: 1
+
+* TX 2026-10-18 Sun 11:49:05.929184 task.claimed CONV-P8129
+:PROPERTIES:
+:TX_ID:        tx-20261018114905-b9388d1b
+:TIME:         [2026-10-18 Sun 11:49:05.929184]
+:TYPE:         task.claimed
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      slack-mcpl-history-review
+:TASK:         CONV-P8129
+:TARGET:       .orgasmic/conversations/CONV-P8129
+:RUN_ID:       run-01M57DG4PPKAHRVFZRZF7GMJC8
+:REQUEST_ID:   slack-main-opus55-high-6de851e
+:REQUESTER:    admin
+:REQUEST_IDENTITY: {"branch":"review/opus55-main-20261018","credential_mode":null,"effort":"high","endpoint":"","from":"6de851e304d67e0341d269e0ce73c2e6a8cbb4d6","governance":"{\"max_iterations\":40,\"stall_timeout_secs\":null,\"max_run_duration_secs\":3600,\"applicable_states\":null,\"linked_skills\":null,\"sandbox_permissions\":{\"allow_exec\":true,\"allow_patch\":false,\"allow_network\":false,\"allow_writes_outside_cwd\":false}}","harness":"claude","harness_args":null,"kind":"reviewer","mcp_isolation":null,"model":"default","protocol":"acp","provider":null,"resume_from":null,"simulated":"false","speed":null,"subject":"CONV-P8129","transport":"spawn","worktree":"~/Documents/Codex/2026-10-16/task/slack-opus-main-review-20261018"}
+:EVENT_ID:     5c4754ae-4b3e-42f8-b7ee-fb4348c53a5e
+:END:

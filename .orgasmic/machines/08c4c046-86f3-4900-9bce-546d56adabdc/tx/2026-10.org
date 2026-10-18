@@ -28,3 +28,91 @@
 :REASON:       Exact requested claude/acp model=claude-opus-5-5 effort=high refused in dry-run: last live model catalog lacks that model ID. No reviewer run started and no alias/model/route substitution was made.
 :EVENT_ID:     81f4cb77-3a09-4046-a140-aa6d2a5db652
 :END:
+
+
+* TX 2026-10-18 Sun 11:49:06 manager.dispatch_started CONV-P8129
+:PROPERTIES:
+:TX_ID:        tx-20261018-slack-ac3ba683-31c5-460d-bb89-c6a2585ebeda
+:TIME:         [2026-10-18 Sun 11:49:06]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      slack-mcpl-history-review
+:TASK:         CONV-P8129
+:TARGET:       .orgasmic/tmp/sessions/dispatch-CONV-P8129-reviewer-20261018T114906-run-01M57DG4PPKAHRVFZRZF7GMJC8.jsonl
+:REASON:
+:KIND:         reviewer
+:HARNESS:      claude
+:PROTOCOL:     acp
+:TRANSPORT:    spawn
+:BRIDGE:       claude-agent-acp@0.75.1
+:MULTIPLEXER:  none
+:WORKTREE:     ~/Documents/Codex/2026-10-16/task/slack-opus-main-review-20261018
+:BRANCH:       review/opus55-main-20261018
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/OPUS-REVIEW-GATED-BRIEF/OPUS-REVIEW-GATED-BRIEF-9604dc9675f745f5966cdb5ab9d66dc4-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/OPUS-REVIEW-GATED-BRIEF/OPUS-REVIEW-GATED-BRIEF-9604dc9675f745f5966cdb5ab9d66dc4-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/OPUS-REVIEW-GATED-BRIEF/OPUS-REVIEW-GATED-BRIEF-9604dc9675f745f5966cdb5ab9d66dc4-stdout.log
+:DISPATCH_ATTEMPT: 9604dc9675f745f5966cdb5ab9d66dc4
+:STARTED_AT:   [2026-10-18 Sun 11:49:06]
+:LIVENESS:     6de851e304d67e0341d269e0ce73c2e6a8cbb4d6
+:NEXT:         reviewer-watch-then-fix-or-close
+:PREFLIGHT:    unchecked:inconclusive
+:REQUESTER:    admin
+:CLAIM_RUN:    run-01M57DG4PPKAHRVFZRZF7GMJC8
+:CACHE_SEED:   skipped
+:CACHE_SEED_DETAIL: reason=not-cargo
+:REVIEW_TREE:  private
+:MODEL:        default
+:EFFORT:       high
+:REASON_INITIAL: Owner requested exact Opus 5.5 high ACP review; Default verified resolves to claude-opus-5-5 on approved Claude 2.1.302, substantive review gated on actual session evidence.
+:REQUEST_IDENTITY: {"branch":"review/opus55-main-20261018","credential_mode":null,"effort":"high","endpoint":"","from":"6de851e304d67e0341d269e0ce73c2e6a8cbb4d6","governance":"{\"max_iterations\":40,\"stall_timeout_secs\":null,\"max_run_duration_secs\":3600,\"applicable_states\":null,\"linked_skills\":null,\"sandbox_permissions\":{\"allow_exec\":true,\"allow_patch\":false,\"allow_network\":false,\"allow_writes_outside_cwd\":false}}","harness":"claude","harness_args":null,"kind":"reviewer","mcp_isolation":null,"model":"default","protocol":"acp","provider":null,"resume_from":null,"simulated":"false","speed":null,"subject":"CONV-P8129","transport":"spawn","worktree":"~/Documents/Codex/2026-10-16/task/slack-opus-main-review-20261018"}
+:EVENT_ID:     f5623420-6583-4e42-9fa3-194caa8fe3ed
+:END:
+
+* TX 2026-10-18 Sun 11:49:10 run.created CONV-P8129
+:PROPERTIES:
+:TX_ID:        tx-20261018-slack-077fe548-bac2-4601-96c2-733df1c09705
+:TIME:         [2026-10-18 Sun 11:49:10]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      slack-mcpl-history-review
+:TASK:         CONV-P8129
+:TARGET:       .orgasmic/tmp/sessions/dispatch-CONV-P8129-reviewer-20261018T114906-run-01M57DG4PPKAHRVFZRZF7GMJC8.jsonl
+:REASON:       Owner requested exact Opus 5.5 high ACP review; Default verified resolves to claude-opus-5-5 on approved Claude 2.1.302, substantive review gated on actual session evidence.
+:RUN_ID:       run-01M57DG4PPKAHRVFZRZF7GMJC8
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-acp
+:KIND:         reviewer
+:HARNESS:      claude
+:PROTOCOL:     acp
+:TRANSPORT:    spawn
+:BRIDGE:       claude-agent-acp@0.75.1
+:MULTIPLEXER:  none
+:WORKTREE:     ~/Documents/Codex/2026-10-16/task/slack-opus-main-review-20261018
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/OPUS-REVIEW-GATED-BRIEF/OPUS-REVIEW-GATED-BRIEF-9604dc9675f745f5966cdb5ab9d66dc4-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/OPUS-REVIEW-GATED-BRIEF/OPUS-REVIEW-GATED-BRIEF-9604dc9675f745f5966cdb5ab9d66dc4-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/OPUS-REVIEW-GATED-BRIEF/OPUS-REVIEW-GATED-BRIEF-9604dc9675f745f5966cdb5ab9d66dc4-stdout.log
+:DISPATCH_ATTEMPT: 9604dc9675f745f5966cdb5ab9d66dc4
+:PID:          60786
+:DISPATCH_TX:  tx-20261018-slack-ac3ba683-31c5-460d-bb89-c6a2585ebeda
+:MODEL_OVERRIDE: default
+:EFFORT_OVERRIDE: high
+:EVENT_ID:     41b1755d-e504-49f3-9ffd-2555abd33260
+:END:
+
+* TX 2026-10-18 Sun 11:49:17 run.asked CONV-P8129
+:PROPERTIES:
+:TX_ID:        tx-20261018-slack-ad4f6b97-e4df-49c3-9b07-a170fbf78314
+:TIME:         [2026-10-18 Sun 11:49:17]
+:TYPE:         run.asked
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      slack-mcpl-history-review
+:TASK:         CONV-P8129
+:REASON:       May I begin the report-only review after the coordinator has verified my actual Claude ACP session model is claude-opus-5-5 and effort high?
+:RUN_ID:       run-01M57DG4PPKAHRVFZRZF7GMJC8
+:ASK_ID:       ask-c0cf42979a014cef921937fc57a56daa
+:TIMEOUT_SECS: 600
+:EVENT_ID:     22ad1194-af3d-45da-bb0c-70a5edefe69b
+:END:
