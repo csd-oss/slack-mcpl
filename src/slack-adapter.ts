@@ -56,6 +56,40 @@ const MAY_HAVE_LANDED = new Set(['already_reacted', 'internal_error', 'fatal_err
 const STATUS_REFRESH_MS = 60 * 1000;
 const STATUS_TEXT = 'is thinking…';
 
+/** Slack's code, when Slack refused the call; undefined for any other error. */
+export function slackRefusal(err: unknown): string | undefined {
+  const e = err as { code?: unknown; data?: { error?: unknown } } | null;
+  return e?.code === ErrorCode.PlatformError && typeof e.data?.error === 'string' ? e.data.error : undefined;
+}
+
+/** Slack's answers to conversations.info that it has no such conversation to
+ *  show this bot (channel_not_found), or that the id isn't one at all
+ *  (invalid_channel_id). */
+const NOT_SHOWN = new Set(['channel_not_found', 'invalid_channel_id']);
+
+/** What can change Slack's answer to a check of a conversation (with DMs off)
+ *  that a later one wouldn't pass either: another conversation, or whoever
+ *  runs this host. A check waitToAskAgain says can pass doesn't come here:
+ *  assertNotDm leaves its error to the explainer. A rate limit's answer
+ *  without the Retry-After the client needs does come here, and is told to
+ *  try again shortly. */
+function afterFailedCheck(err: unknown): string {
+  const e = err as { data?: { needed?: unknown } } | null;
+  const code = slackRefusal(err);
+  // Not Slack's refusal, nor a failure waitToAskAgain names, such as a rate
+  // limit's answer without the Retry-After the client needs.
+  if (code === undefined) return 'Try again shortly.';
+  if (NOT_SHOWN.has(code)) return 'list_channels shows the ones it can use.';
+  if (code === 'missing_scope') {
+    const needed = typeof e?.data?.needed === 'string' && e.data.needed ? ` (Slack names ${e.data.needed})` : '';
+    return (
+      `Calling again won't change that until whoever runs this host adds the scope it needs${needed} to the ` +
+      "Slack app's bot token scopes and reinstalls the app."
+    );
+  }
+  return "Calling again won't change Slack's answer; only whoever runs this host, or the workspace's admins, can.";
+}
+
 /** The read scope conversations.list needs for each conversation type. */
 const TYPE_SCOPE: Record<string, string> = {
   public_channel: 'channels:read',
@@ -113,40 +147,6 @@ export class NoReadableConversations extends Error {
     super(`This bot's token has none of the read scopes ${andList(needed)}`);
     this.name = 'NoReadableConversations';
   }
-}
-
-/** Slack's code, when Slack refused the call; undefined for any other error. */
-export function slackRefusal(err: unknown): string | undefined {
-  const e = err as { code?: unknown; data?: { error?: unknown } } | null;
-  return e?.code === ErrorCode.PlatformError && typeof e.data?.error === 'string' ? e.data.error : undefined;
-}
-
-/** Slack's answers to conversations.info that it has no such conversation to
- *  show this bot (channel_not_found), or that the id isn't one at all
- *  (invalid_channel_id). */
-const NOT_SHOWN = new Set(['channel_not_found', 'invalid_channel_id']);
-
-/** What can change Slack's answer to a check of a conversation (with DMs off)
- *  that a later one wouldn't pass either: another conversation, or whoever
- *  runs this host. A check waitToAskAgain says can pass doesn't come here:
- *  assertNotDm leaves its error to the explainer. A rate limit's answer
- *  without the Retry-After the client needs does come here, and is told to
- *  try again shortly. */
-function afterFailedCheck(err: unknown): string {
-  const e = err as { data?: { needed?: unknown } } | null;
-  const code = slackRefusal(err);
-  // Not Slack's refusal, nor a failure waitToAskAgain names, such as a rate
-  // limit's answer without the Retry-After the client needs.
-  if (code === undefined) return 'Try again shortly.';
-  if (NOT_SHOWN.has(code)) return 'list_channels shows the ones it can use.';
-  if (code === 'missing_scope') {
-    const needed = typeof e?.data?.needed === 'string' && e.data.needed ? ` (Slack names ${e.data.needed})` : '';
-    return (
-      `Calling again won't change that until whoever runs this host adds the scope it needs${needed} to the ` +
-      "Slack app's bot token scopes and reinstalls the app."
-    );
-  }
-  return "Calling again won't change Slack's answer; only whoever runs this host, or the workspace's admins, can.";
 }
 
 type AckEntry = {
