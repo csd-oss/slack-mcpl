@@ -14,7 +14,7 @@ test('file association uses exact conversation IDs in Slack share metadata', () 
   for (const association of [{}, { channels: ['C11'] }, { shares: { public: { C1: [] } } }, { channels: 'C1' }]) {
     assert.throws(() => associatedFileUrl({ ...association, url_private }, 'C1'), /not associated/);
   }
-  assert.throws(() => associatedFileUrl({ channels: ['C1'], url_private: 'https://evil.example/file' }, 'C1'), /refusing to fetch/);
+  assert.throws(() => associatedFileUrl({ channels: ['C1'], url_private: 'https://evil.example/file' }, 'C1'), /evil\.example isn't Slack's file server/);
 });
 
 async function fixture(t: any, opts: { legacy?: boolean; scopes?: string[] } = {}) {
@@ -54,10 +54,10 @@ test('explicit file fetch requires channel and file IDs and ignores untrusted re
   assert.ok(['channelId', 'fileId'].every((key) => key in listed.tools.find((tool) => tool.name === 'fetch_attachment')!.inputSchema.properties));
   const missing = await h.call({ url: 'https://files.slack.com/files-pri/T1-F1/input.txt' });
   assert.equal(missing.isError, true);
-  assert.match(missing.content[0].text, /channelId is required/);
+  assert.match(missing.content[0].text, /channelId must be a non-empty string, and this call left it out/);
   const missingFile = await h.call({ channelId: 'C1' });
   assert.equal(missingFile.isError, true);
-  assert.match(missingFile.content[0].text, /fileId is required/);
+  assert.match(missingFile.content[0].text, /fileId must be a non-empty string, and this call left it out/);
   assert.equal(h.downloads.length, 0);
   const result = await h.call({ channelId: 'C1', fileId: 'F1', url: 'https://evil.example/do-not-fetch' });
   assert.notEqual(result.isError, true);
