@@ -16,11 +16,12 @@
  * (`slack_webapi_request_error`, or `slack_webapi_http_error` with the HTTP
  * status), which leaves a write's outcome unknown, unless the connection
  * couldn't be made at all, which Node's code on the request error's
- * `original` tells. Four more are this server's own: a request its call's
+ * `original` tells. Five more are this server's own: a request its call's
  * deadline left no time to send (OutOfCallTime), fetch_attachment's download
  * running past its timeout, a failed post of an upload's bytes to Slack's
- * upload server (UploadBytesFailed), and an upload whose last step named no file
- * (UploadNotConfirmed). Each refusal code here is one Slack's
+ * upload server (UploadBytesFailed), an upload whose last step named no file
+ * (UploadNotConfirmed), and a listing the token's scopes leave no type to
+ * ask for (NoReadableConversations). Each refusal code here is one Slack's
  * reference documents for a method these tools call. Other errors, and codes
  * not listed, pass through unchanged.
  */
@@ -28,6 +29,7 @@ import { ErrorCode } from '@slack/web-api';
 import { connectionNeverMade, reactionName } from './content.js';
 import {
   CALL_SECONDS,
+  NoReadableConversations,
   OutOfCallTime,
   SLACK_CLIENT_OPTIONS,
   UploadBytesFailed,
@@ -221,6 +223,16 @@ function explanation(err: unknown, call: SlackCall): string | undefined {
       `had used ${err.usedSeconds} of them, waiting behind earlier calls or on its own earlier requests, so too ` +
       `few were left to send this request to Slack. It wasn't sent, so calling again is safe.` +
       startsOver(`a call's ${CALL_SECONDS} seconds`)
+    );
+  }
+  if (err instanceof NoReadableConversations) {
+    // Not sent: Slack refuses a listing for a type whose read scope the token
+    // lacks, and Slack had just reported the token's scopes. Its message, which
+    // the answer opens with, names the read scopes.
+    return (
+      `${lead}: Slack lists each kind of conversation only for a token with that kind's read scope. Calling ` +
+      "again won't change that: whoever runs this host has to add one of those scopes to the app's bot token " +
+      'scopes and reinstall the app to the workspace.'
     );
   }
   if (call.tool === 'fetch_attachment' && (err as { name?: unknown } | null)?.name === 'TimeoutError') {
