@@ -31,9 +31,9 @@ export interface FetchedAttachment {
 export async function fetchAttachmentBytes(
   url: string,
   fallbackName: string,
-  opts: { headers?: Record<string, string>; signal?: AbortSignal } = {},
+  opts: { headers?: Record<string, string>; redirect?: 'error' | 'follow' | 'manual'; signal?: AbortSignal } = {},
 ): Promise<FetchedAttachment> {
-  const resp = await fetch(url, { headers: opts.headers ?? {}, redirect: 'follow', signal: opts.signal });
+  const resp = await fetch(url, { headers: opts.headers ?? {}, redirect: opts.redirect ?? 'follow', signal: opts.signal });
   if (!resp.ok) throw new Error(`fetch failed: ${resp.status} ${resp.statusText}`);
 
   // Pre-check Content-Length so an oversized declared body never starts buffering.
@@ -127,7 +127,8 @@ export function parseSlackAttachmentUrl(rawUrl: string): URL {
 }
 
 export interface AttachmentRef {
-  path: string;       // url_private — needs Bearer bot-token auth to fetch
+  fileId?: string;    // Slack's files[].id; a reference, never authorization
+  path: string;       // url_private; may be empty for ID-only explicit-profile refs
   name: string;       // basename for human display
   mimeType: string;   // best-effort from extension or the API
   isImage: boolean;
@@ -287,7 +288,7 @@ export interface SlackHistoryMessage {
   root?: { thread_ts?: string; ts?: string };
   reply_count?: number;
   bot_id?: string;
-  files?: Array<{ name?: string; mimetype?: string; url_private?: string }>;
+  files?: Array<{ id?: string; name?: string; mimetype?: string; url_private?: string }>;
 }
 
 /** The minimal conversations.history surface fetchSlackHistory needs —

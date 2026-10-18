@@ -24,6 +24,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { WebClient, ErrorCode, LogLevel, type Logger, type WebAPICallResult, type WebClientOptions } from '@slack/web-api';
 import { SocketModeClient } from '@slack/socket-mode';
 import { SLACK_TS, readBounded, readOptions, type HistoryReadResult, type ReadStop } from './history-read.js';
+import { SlackAccessPolicy, HISTORY_MEMBERSHIP_PROOF, type SlackAccessPolicyConfig } from './access-policy.js';
+import { RoutingLedger, type AccessAdmission, type RoutingReceipt, type SenderKind } from './recipient-routing.js';
+import type { RecipientRoutingConfig } from './configuration.js';
+import { attachmentFetchHint } from './file-access.js';
 import {
   formatSlackText,
   extractSlackUserIds,
@@ -199,7 +203,7 @@ interface SlackMessageEvent {
   bot_id?: string;
   channel_type?: string;
   team?: string;
-  files?: Array<{ url_private?: string; name?: string; mimetype?: string }>;
+  files?: Array<{ id?: string; url_private?: string; name?: string; mimetype?: string }>;
 }
 
 /** The fields of a conversations.list/info entry this adapter dereferences —
@@ -243,6 +247,12 @@ export interface SlackMessageData {
   threadTs?: string;
   authorId: string;
   authorName: string;
+  /** Set with recipient routing: the author as the routing ledger classes it. */
+  isBot?: boolean;
+  senderKind?: SenderKind;
+  authorBotId?: string;
+  /** Recipient routing's receipt for this message (SLACK_RECIPIENT_ROUTING). */
+  routing?: RoutingReceipt;
   /** Raw mrkdwn text as received. */
   content: string;
   /** Mentions resolved to @name (uid:U…), links/broadcasts unescaped. */
@@ -272,7 +282,9 @@ export interface HistoryMessage {
   /** Its replies, when Slack gives a count; missing means unknown. */
   replyCount?: number;
   timestamp: Date;
-  attachments: Array<{ name: string; mimeType?: string; url?: string }>;
+  /** With an explicit access policy, an attachment carries Slack's file ID,
+   *  and its name carries fetch_attachment's arguments (shapeReadable). */
+  attachments: Array<{ fileId?: string; name: string; mimeType?: string; url?: string }>;
 }
 
 export interface SlackUserMatch {
@@ -283,6 +295,11 @@ export interface SlackUserMatch {
 }
 
 export interface SlackAdapterConfig {
+  /** Opt-in deployment policy (SLACK_ACCESS_POLICY). Unset keeps the
+   *  operator controls below as they are. */
+  accessPolicy?: SlackAccessPolicyConfig;
+  /** Opt-in recipient routing (SLACK_RECIPIENT_ROUTING); needs accessPolicy. */
+  recipientRouting?: RecipientRoutingConfig;
   botToken: string;
   appToken: string;
   /** When set, DMs from anyone not in this user-ID list are dropped. */
@@ -576,7 +593,7 @@ export function slackClients(
 export async function connectSlack(config: SlackAdapterConfig, slackApiUrl?: string): Promise<SlackAdapter> {
   const clients = slackClients(config.botToken, config.appToken, slackApiUrl);
   const auth = await clients.auth.auth.test();
-  return new SlackAdapter(
+  const adapter = new SlackAdapter(
     // WebClient satisfies SlackWebLike at runtime; the cast bridges the
     // parameter-width gap (SlackWebLike takes loose records so tests can
     // inject fakes, WebClient's methods want their exact argument types).
@@ -591,6 +608,9 @@ export async function connectSlack(config: SlackAdapterConfig, slackApiUrl?: str
     // Granted scopes, from the x-oauth-scopes header of auth.test.
     reportedScopes(auth.response_metadata),
   );
+  if (config.accessPolicy) adapter.configureAccessPolicy(config.accessPolicy);
+  if (config.recipientRouting) adapter.configureRecipientRouting(config.recipientRouting);
+  return adapter;
 }
 
 /** A file as files.completeUploadExternal's answer describes it: `shares` names
@@ -606,7 +626,7 @@ export interface SlackWebLike {
     list(args: Record<string, unknown>): Promise<{ channels?: unknown[]; response_metadata?: { next_cursor?: string; scopes?: string[] } }>;
     info(args: { channel: string }): Promise<{ channel?: unknown }>;
     open(args: { users: string }): Promise<{ channel?: { id?: string } }>;
-    history(args: Record<string, unknown>): Promise<{ messages?: unknown[]; has_more?: boolean; response_metadata?: { next_cursor?: string } }>;
+    history(args: Record<string, unknown>): Promise<{ ok?: boolean; messages?: unknown[]; has_more?: boolean; response_metadata?: { next_cursor?: string } }>;
     replies(args: Record<string, unknown>): Promise<{ messages?: unknown[]; has_more?: boolean; response_metadata?: { next_cursor?: string } }>;
   };
   auth: {
@@ -625,13 +645,15 @@ export interface SlackWebLike {
     getUploadURLExternal(args: { filename: string; length: number }): Promise<{ upload_url?: string; file_id?: string }>;
     completeUploadExternal(args: Record<string, unknown>): Promise<{ files?: SlackUploadedFile[] }>;
     delete(args: { file: string }): Promise<unknown>;
+    /** Optional so test fakes need not carry it; the real WebClient has it. */
+    info?(args: { file: string }): Promise<{ file?: Record<string, unknown> }>;
   };
   /** Optional so test fakes need not carry it; the real WebClient has it. */
   assistant?: {
     threads: { setStatus(args: { channel_id: string; thread_ts: string; status: string }): Promise<unknown> };
   };
   users: {
-    info(args: { user: string }): Promise<{ user?: { profile?: { display_name?: string }; real_name?: string; name?: string } }>;
+    info(args: { user: string }): Promise<{ user?: { is_bot?: boolean; profile?: { display_name?: string }; real_name?: string; name?: string } }>;
     list(args: { limit?: number; cursor?: string }): Promise<{ members?: unknown[]; response_metadata?: { next_cursor?: string } }>;
   };
 }
@@ -643,6 +665,14 @@ export interface SlackSocketLike {
 }
 
 export class SlackAdapter {
+  private routingLedger?: RoutingLedger;
+  get routing(): RoutingLedger | undefined { return this.routingLedger; }
+  private accessConfig?: SlackAccessPolicyConfig;
+  private botUsers = new Set<string>();
+  private humanUsers = new Set<string>();
+  private accessPolicy?: SlackAccessPolicy;
+  /** Lets file helpers select strict association checks without exposing policy. */
+  get hasExplicitAccessPolicy(): boolean { return this.accessPolicy !== undefined; }
   private userNameCache = new Map<string, string>();
   private messageHandlers: Array<(msg: SlackMessageData) => void> = [];
   private socketStarted = false;
@@ -652,11 +682,13 @@ export class SlackAdapter {
   private channelIds = new Set<string>();
 
   get dmsDisabled(): boolean {
+    if (this.accessPolicy) return !this.accessPolicy.dmsWritable;
     return this.disableDms;
   }
 
   /** Can send_dm succeed at all? A DM ID starts with D. */
   get dmsWritable(): boolean {
+    if (this.accessPolicy) return this.accessPolicy.dmsWritable;
     return !this.disableDms && (!this.sendChannels?.length || this.sendChannels.some((id) => id.startsWith('D')));
   }
 
@@ -701,6 +733,24 @@ export class SlackAdapter {
     this.messageHandlers.push(handler);
   }
 
+  /** Install before Socket Mode starts; membership itself is never cached. */
+  configureAccessPolicy(config: SlackAccessPolicyConfig): void {
+    if (this.socketStarted || this.accessPolicy) throw new Error('Slack access policy must be configured once before start');
+    this.accessPolicy = new SlackAccessPolicy(config);
+    this.accessConfig = {readJoinedChannels: config.readJoinedChannels,
+      writeChannels: [...config.writeChannels], dmUsers: [...config.dmUsers]};
+  }
+
+  /** Install once after Slack authentication and explicit policy, before start.
+   * Each agent supplies its own private state file and installation namespace. */
+  configureRecipientRouting(config: RecipientRoutingConfig): void {
+    if (this.socketStarted || this.routingLedger || !this.accessConfig || !this.botUserId)
+      throw new Error('Recipient routing requires authenticated identity and explicit access policy before start');
+    if (config.expectedBotUserId !== undefined && config.expectedBotUserId !== this.botUserId)
+      throw new Error('Authenticated Slack recipient identity differs from configuration');
+    this.routingLedger = new RoutingLedger(config.stateFile, this.botUserId, config.namespace, this.accessConfig);
+  }
+
   /** Open the Socket Mode connection. Resolves once connected. */
   async start(): Promise<void> {
     if (this.socketStarted) return;
@@ -722,18 +772,22 @@ export class SlackAdapter {
       await this.socket.disconnect().catch(() => {});
       this.socketStarted = false;
     }
+    this.routingLedger?.close();
   }
 
   // ── Conversations ──
 
   private conversationTypes(): string[] {
+    // An explicit access policy never lists group DMs, and DMs only when it
+    // allows some peer.
+    if (this.accessPolicy) return this.accessPolicy.dmsWritable ? ['public_channel', 'private_channel', 'im'] : ['public_channel', 'private_channel'];
     return this.disableDms ? ['public_channel', 'private_channel'] : Object.keys(TYPE_SCOPE);
   }
 
   /** The enabled types the token's scopes can read: every one while they're
-   *  unknown. */
+   *  unknown, except under an explicit access policy, which reads none then. */
   private readableTypes(): string[] {
-    return this.conversationTypes().filter((type) => !this.scopes || this.scopes.includes(TYPE_SCOPE[type]));
+    return this.conversationTypes().filter((type) => this.scopes ? this.scopes.includes(TYPE_SCOPE[type]) : !this.accessPolicy);
   }
 
   /** The enabled types the token's scopes can't read: none while they're
@@ -781,7 +835,18 @@ export class SlackAdapter {
    *  long). A DM whose name is still missing carries `nameWait`. */
   async listConversations(includeNonMember = false, waitOut?: SlackWaitOut): Promise<SlackListing> {
     const noneReadable = () => new NoReadableConversations(this.conversationTypes().map((type) => TYPE_SCOPE[type]));
+    // An explicit access policy's pinned channels, each proven afresh, are
+    // listed whatever the listing's types: they're pinned because the token
+    // can't list them.
+    const pinned: SlackConversationInfo[] = [];
+    for (const id of this.accessPolicy?.historyMembershipFallbacks(this.scopes) ?? []) {
+      const info = await this.describeConversation(await this.readAccessConversation(id));
+      if (info) pinned.push(info);
+    }
     let types = this.readableTypes();
+    // Under the policy, a token whose scopes read no type lists only its
+    // pinned channels, and isn't asked for wider scopes.
+    if (this.accessPolicy && types.length === 0) return { conversations: pinned, leftOut: this.leftOutTypes() };
     let out: SlackConversationInfo[] = [];
     let cursor: string | undefined;
     let limited = 0;
@@ -832,24 +897,97 @@ export class SlackAdapter {
       limited = 0;
       this.takeScopes(reportedScopes(result.response_metadata));
       if (startOver()) continue;
-      for (const raw of (result.channels ?? []) as SlackApiConversation[]) {
+      for (let raw of (result.channels ?? []) as SlackApiConversation[]) {
+        if (pinned.some((info) => info.id === raw.id)) continue;
+        if (this.accessPolicy) {
+          // Listed only as a fresh access check describes it, never as the
+          // list's metadata does; one that fails is left out.
+          if (!raw.id) continue;
+          try { raw = await this.readAccessConversation(raw.id); } catch { continue; }
+        }
         const info = await this.describeConversation(raw, names);
         if (!info) continue;
-        if (!includeNonMember && info.kind === 'channel' && !info.isMember) continue;
+        if ((!includeNonMember || this.accessPolicy) && info.kind === 'channel' && !info.isMember) continue;
         out.push(info);
       }
       cursor = result.response_metadata?.next_cursor || undefined;
       // Another listing's answer may have changed the scopes while this page's
       // DM names were looked up, so they're checked once more before it ends.
       if (!cursor && !startOver()) {
-        return { conversations: out, leftOut: this.conversationTypes().filter((type) => !types.includes(type)) };
+        return { conversations: [...pinned, ...out], leftOut: this.conversationTypes().filter((type) => !types.includes(type)) };
       }
     }
   }
 
   async getConversationMeta(channelId: string): Promise<SlackConversationInfo | null> {
+    if (this.accessPolicy) return this.describeConversation(await this.readAccessConversation(channelId));
     const info = await this.web.conversations.info({ channel: channelId });
     return this.describeConversation((info.channel ?? {}) as SlackApiConversation);
+  }
+
+  /** The explicit access policy's fresh check of a conversation: its metadata
+   *  from conversations.info, or, for a pinned public channel when the token
+   *  lacks channels:read, a one-message conversations.history request, which
+   *  a bot token passes only as a member. Neither is cached. */
+  private async readAccessConversation(channelId: string): Promise<SlackApiConversation> {
+    if (!this.accessPolicy) throw new Error('Slack access policy is not configured');
+    if (!/^[CGD][A-Z0-9]+$/.test(channelId)) throw new Error('Invalid Slack conversation ID');
+    if (!Array.isArray(this.scopes)) throw new Error('Slack scope metadata is unavailable');
+    if (this.accessPolicy.usesHistoryMembershipFallback(channelId, this.scopes)) {
+      this.accessPolicy.requireScope(this.scopes, 'channels:history');
+      // Bot tokens can read history only for conversations they belong to.
+      // Never cache this proof or add channels:read to reported token scopes.
+      const result = await this.web.conversations.history({ channel: channelId, limit: 1 });
+      if (result.ok !== true) throw new Error(`Could not freshly confirm membership of ${channelId}`);
+      const conversation: SlackApiConversation & { [HISTORY_MEMBERSHIP_PROOF]: true } = {
+        id: channelId, name: channelId, is_im: false, is_mpim: false,
+        is_private: false, is_member: true, [HISTORY_MEMBERSHIP_PROOF]: true,
+      };
+      this.accessPolicy.requireReadable(channelId, conversation, this.scopes);
+      return conversation;
+    }
+    const result = await this.web.conversations.info({ channel: channelId });
+    const conversation = result.channel as SlackApiConversation | undefined;
+    this.accessPolicy.requireReadable(channelId, conversation, this.scopes);
+    return conversation!;
+  }
+
+  /** Used by file association checks as well as history reads. */
+  async requireReadableConversation(channelId: string): Promise<void> {
+    if (this.accessPolicy) { await this.readAccessConversation(channelId); return; }
+    await this.assertNotDm(channelId);
+  }
+
+  /** Every history read's check, made before it reads: the DM check without a
+   *  policy, and with one, a fresh access check and the history scope. */
+  private async requireHistoryConversation(channelId: string): Promise<SlackApiConversation | undefined> {
+    if (!this.accessPolicy) { await this.assertNotDm(channelId); return; }
+    const conversation = await this.readAccessConversation(channelId);
+    this.accessPolicy.requireScope(this.scopes, conversation.is_im ? 'im:history' : conversation.is_private ? 'groups:history' : 'channels:history');
+    return conversation;
+  }
+
+  /** Every write's check: with a policy, a fresh access check, the policy's
+   *  write destinations and `scope`; then SLACK_SEND_CHANNELS. */
+  private async requireWritableConversation(channelId: string, scope: string): Promise<SlackApiConversation | undefined> {
+    let conversation: SlackApiConversation | undefined;
+    if (this.accessPolicy) {
+      conversation = await this.readAccessConversation(channelId);
+      this.accessPolicy.requireWritable(channelId, conversation, this.scopes, scope);
+    }
+    this.assertWritable(channelId);
+    return conversation;
+  }
+
+  /** Fetch metadata only. Callers must validate readable conversation shares
+   * before fetching bytes; a file ID alone is not permission to download. */
+  async getFileInfo(fileId: string): Promise<Record<string, unknown>> {
+    if (!/^F[A-Z0-9]+$/.test(fileId)) throw new Error('Invalid Slack file ID');
+    this.accessPolicy?.requireScope(this.scopes, 'files:read');
+    if (!this.web.files?.info) throw new Error('File metadata is not available');
+    const result = await this.web.files.info({ file: fileId });
+    if (!result.file || result.file.id !== fileId) throw new Error('Slack returned missing or mismatched file metadata');
+    return result.file;
   }
 
   /** `names.waitOut`, in a listing that runs in the background, waits out a
@@ -909,6 +1047,7 @@ export class SlackAdapter {
   /** Slack scopes are workspace-wide, so "speak only here" is enforced here:
    *  the one place every write passes through. */
   canWrite(channelId: string): boolean {
+    if (this.accessPolicy && !this.accessPolicy.mayWrite(channelId)) return false;
     return !this.sendChannels?.length || this.sendChannels.includes(channelId);
   }
 
@@ -949,28 +1088,46 @@ export class SlackAdapter {
 
   /** Per conversation, the thread showing our status and when it was set. */
   private statusOn = new Map<string, { ts: string; at: number }>();
+  private recipientStatusOperations = new Map<string, Promise<void>>();
+
+  /** Optional frozen-target status path. A delayed stop for one turn must not
+   * clear another turn's thread status. Legacy status behavior is unchanged. */
+  async setRecipientThreadStatus(channelId: string, root: string, stop: boolean, isCurrent = () => true): Promise<void> {
+    const previous = this.recipientStatusOperations.get(channelId) ?? Promise.resolve();
+    const operation = previous.then(async () => {
+      if (!isCurrent()) return;
+      if (!stop) await this.setThreadStatus(channelId, root, isCurrent);
+      else if (this.statusOn.get(channelId)?.ts === root) await this.setThreadStatus(channelId, undefined, isCurrent);
+    });
+    this.recipientStatusOperations.set(channelId, operation);
+    try { await operation; }
+    finally { if (this.recipientStatusOperations.get(channelId) === operation) this.recipientStatusOperations.delete(channelId); }
+  }
 
   /** Show "is thinking…" on thread `threadTs` of `channelId`, or clear the
    *  conversation's status when `threadTs` is undefined. Moving to another
    *  thread clears the old one. Only where the bot may write: a status in a
    *  read-only conversation would tell its readers the bot is reading.
    *  Best-effort: never throws. */
-  async setThreadStatus(channelId: string, threadTs: string | undefined): Promise<void> {
+  async setThreadStatus(channelId: string, threadTs: string | undefined, isCurrent = () => true): Promise<void> {
+    if (!isCurrent()) return;
     const cur = this.statusOn.get(channelId);
     if (threadTs && cur?.ts === threadTs && Date.now() - cur.at < STATUS_REFRESH_MS) return;
     if (cur && cur.ts !== threadTs) {
       this.statusOn.delete(channelId);
-      await this.callStatus(channelId, cur.ts, '');
+      await this.callStatus(channelId, cur.ts, '', isCurrent);
     }
-    if (!threadTs || !this.canWrite(channelId)) return;
-    if (this.disableDms && (this.dmIds.has(channelId) || channelId.startsWith('D'))) return;
+    if (!threadTs || !this.canWrite(channelId) || !isCurrent()) return;
+    if (!this.accessPolicy && this.disableDms && (this.dmIds.has(channelId) || channelId.startsWith('D'))) return;
     this.statusOn.set(channelId, { ts: threadTs, at: Date.now() });
-    if (!(await this.callStatus(channelId, threadTs, STATUS_TEXT))) this.statusOn.delete(channelId);
+    if (!(await this.callStatus(channelId, threadTs, STATUS_TEXT, isCurrent))) this.statusOn.delete(channelId);
   }
 
-  private async callStatus(channelId: string, threadTs: string, status: string): Promise<boolean> {
+  private async callStatus(channelId: string, threadTs: string, status: string, isCurrent = () => true): Promise<boolean> {
     if (!this.web.assistant) return false;
     try {
+      if (this.accessPolicy) await this.requireWritableConversation(channelId, 'chat:write');
+      if (!isCurrent()) return false;
       await this.web.assistant.threads.setStatus({ channel_id: channelId, thread_ts: threadTs, status });
       return true;
     } catch (err) {
@@ -1034,6 +1191,7 @@ export class SlackAdapter {
     if (!(await entry.added)) return this.dropAck(channelId, ts, entry);
     entry.tries++;
     try {
+      if (this.accessPolicy) await this.requireWritableConversation(channelId, 'reactions:write');
       await this.web.reactions.remove({ channel: channelId, timestamp: ts, name: this.ackReaction! });
       this.dropAck(channelId, ts, entry);
     } catch (err) {
@@ -1050,8 +1208,13 @@ export class SlackAdapter {
     text: string,
     opts: { threadTs?: string } = {},
   ): Promise<{ messageId: string }> {
-    this.assertWritable(channelId);
+    await this.requireWritableConversation(channelId, 'chat:write');
     await this.assertNotDm(channelId);
+    return this.postValidatedMessage(channelId, text, opts);
+  }
+
+  /** chat.postMessage, once the caller has made the write's checks. */
+  private async postValidatedMessage(channelId: string, text: string, opts: { threadTs?: string } = {}): Promise<{ messageId: string }> {
     const result = await this.web.chat.postMessage({
       channel: channelId,
       text,
@@ -1081,7 +1244,7 @@ export class SlackAdapter {
     channelId: string,
     file: { filename: string; data: Buffer; title?: string; comment?: string; threadTs?: string },
   ): Promise<{ fileId: string; shareTs?: string }> {
-    this.assertWritable(channelId);
+    await this.requireWritableConversation(channelId, 'files:write');
     await this.assertNotDm(channelId);
     const target = await this.web.files.getUploadURLExternal({ filename: file.filename, length: file.data.byteLength });
     const url = target.upload_url;
@@ -1150,6 +1313,8 @@ export class SlackAdapter {
    *  ID, and a user ID (U…) posts into that user's DM. An unknown ID is asked
    *  about until Slack confirms it; if Slack cannot say, it is refused. */
   private async assertNotDm(channelId: string): Promise<void> {
+    // Callers with the explicit policy already performed a fresh access check.
+    if (this.accessPolicy) return;
     if (!this.disableDms || this.channelIds.has(channelId)) return;
     const refuse = (why: string) =>
       new Error(`Conversation ${channelId} ${why}; direct messages are disabled for this bot (SLACK_DISABLE_DMS)`);
@@ -1170,6 +1335,18 @@ export class SlackAdapter {
   }
 
   async sendDM(userId: string, text: string): Promise<{ messageId: string; channelId: string }> {
+    if (this.accessPolicy) {
+      this.accessPolicy.requireDmUser(userId); // before conversations.open
+      this.accessPolicy.requireScope(this.scopes, 'im:write');
+      const open = await this.web.conversations.open({ users: userId });
+      const channelId = open.channel?.id;
+      if (!channelId) throw new Error(`Could not open a DM with user ${userId}`);
+      const conversation = await this.requireWritableConversation(channelId, 'chat:write');
+      if (!conversation) throw new Error('Opened DM access could not be confirmed');
+      if (conversation.is_im !== true || conversation.user !== userId) throw new Error('Opened DM does not match the allowed peer');
+      const { messageId } = await this.postValidatedMessage(channelId, text);
+      return { messageId, channelId };
+    }
     if (this.disableDms) throw new Error('Direct messages are disabled for this bot (SLACK_DISABLE_DMS)');
     // A DM ID starts with D. If the allow-list names none, no DM can be written,
     // so don't open one just to find that out.
@@ -1184,13 +1361,13 @@ export class SlackAdapter {
   }
 
   async editMessage(channelId: string, ts: string, text: string): Promise<void> {
-    this.assertWritable(channelId);
+    await this.requireWritableConversation(channelId, 'chat:write');
     await this.assertNotDm(channelId);
     await this.web.chat.update({ channel: channelId, ts, text });
   }
 
   async deleteMessage(channelId: string, ts: string): Promise<void> {
-    this.assertWritable(channelId);
+    await this.requireWritableConversation(channelId, 'chat:write');
     await this.assertNotDm(channelId);
     await this.web.chat.delete({ channel: channelId, ts });
   }
@@ -1198,13 +1375,13 @@ export class SlackAdapter {
   /** Deletes a file this bot uploaded, with the same write checks as a
    *  message's delete. */
   async deleteFile(channelId: string, fileId: string): Promise<void> {
-    this.assertWritable(channelId);
+    await this.requireWritableConversation(channelId, 'files:write');
     await this.assertNotDm(channelId);
     await this.web.files.delete({ file: fileId });
   }
 
   async addReaction(channelId: string, ts: string, emoji: string): Promise<void> {
-    this.assertWritable(channelId);
+    await this.requireWritableConversation(channelId, 'reactions:write');
     await this.assertNotDm(channelId);
     await this.web.reactions.add({ channel: channelId, timestamp: ts, name: reactionName(emoji) });
   }
@@ -1218,13 +1395,13 @@ export class SlackAdapter {
    *  with shapeHistory. */
   async readHistory(channelId: string, args: Record<string, unknown>): Promise<HistoryReadResult> {
     const opts = readOptions(args, 'history', channelId);
-    await this.assertNotDm(channelId);
+    await this.requireHistoryConversation(channelId);
     return readBounded(opts, {
       page: (at, limit) => this.web.conversations.history({
         channel: channelId, limit, inclusive: false,
         ...(at ? { latest: at } : {}), ...(opts.oldest ? { oldest: opts.oldest } : {}),
       }),
-      shape: (messages) => this.shapeHistory(messages),
+      shape: (messages) => this.shapeReadable(messages, channelId),
       writable: this.canWrite(channelId),
       stopped: readStop,
     });
@@ -1234,13 +1411,13 @@ export class SlackAdapter {
    *  thread from its parent. */
   async readThread(channelId: string, threadTs: string, args: Record<string, unknown>): Promise<HistoryReadResult> {
     const opts = readOptions(args, 'thread', channelId, threadTs);
-    await this.assertNotDm(channelId);
+    await this.requireHistoryConversation(channelId);
     return readBounded(opts, {
       page: (at, limit) => this.web.conversations.replies({
         channel: channelId, ts: threadTs, limit, inclusive: false,
         ...(at ? { oldest: at } : {}), ...(opts.latest ? { latest: opts.latest } : {}),
       }),
-      shape: (messages) => this.shapeHistory(messages),
+      shape: (messages) => this.shapeReadable(messages, channelId),
       writable: this.canWrite(channelId),
       stopped: readStop,
     });
@@ -1253,14 +1430,34 @@ export class SlackAdapter {
     channelId: string,
     opts: { limit?: number; oldest?: string; latest?: string } = {},
   ): Promise<{ messages: HistoryMessage[]; truncated: boolean }> {
-    await this.assertNotDm(channelId);
+    await this.requireHistoryConversation(channelId);
     const { messages, truncated } = await fetchSlackHistory(this.web, {
       channel: channelId,
       ...(opts.oldest !== undefined ? { oldest: opts.oldest } : {}),
       ...(opts.latest !== undefined ? { latest: opts.latest } : {}),
       maxMessages: opts.limit ?? 50,
     });
-    return { messages: await this.shapeHistory(messages), truncated };
+    return { messages: await this.shapeReadable(messages, channelId), truncated };
+  }
+
+  /** shapeHistory, and under an explicit access policy, each attachment as
+   *  that policy refers to it: by Slack's file ID, with fetch_attachment's
+   *  arguments after its name, and never by the URL a message carries, which
+   *  the policy doesn't trust. The read tools and backscroll show an
+   *  attachment's name as given, so the reference reaches the agent. */
+  private async shapeReadable(messages: SlackHistoryMessage[], channelId: string): Promise<HistoryMessage[]> {
+    const shaped = await this.shapeHistory(messages);
+    if (!this.accessPolicy) return shaped;
+    return shaped.map((m, i) => ({
+      ...m,
+      attachments: (messages[i]!.files ?? []).map((f) => {
+        const fileId = typeof f.id === 'string' && /^F[A-Z0-9]+$/.test(f.id) ? f.id : undefined;
+        return {
+          ...(fileId ? { fileId } : {}),
+          name: `${f.name ?? 'attachment'}${f.mimetype ? ` (${f.mimetype})` : ''}${attachmentFetchHint(channelId, fileId)}`,
+        };
+      }),
+    }));
   }
 
   private async shapeHistory(messages: SlackHistoryMessage[]): Promise<HistoryMessage[]> {
@@ -1301,6 +1498,7 @@ export class SlackAdapter {
   // ── Users ──
 
   async findUsers(query: string, max = 25): Promise<SlackUserMatch[]> {
+    this.accessPolicy?.requireScope(this.scopes, 'users:read');
     const q = query.toLowerCase();
     if (!q) throw new Error('query is required');
     const matches: SlackUserMatch[] = [];
@@ -1336,20 +1534,31 @@ export class SlackAdapter {
 
   private async handleMessageEvent(event: SlackMessageEvent): Promise<void> {
     if (!event || event.type !== 'message') return;
-    if (!CONTENT_SUBTYPES.has(event.subtype)) return;
+    // With recipient routing, other bots' messages come through as context.
+    if (!CONTENT_SUBTYPES.has(event.subtype) && !(this.routing && event.subtype === 'bot_message')) return;
     // Self-filter: skip our own messages and other bots' (bot_id covers
     // bot_message-without-subtype edge cases like app-posted file shares).
-    if (event.bot_id) return;
+    if (event.bot_id && !this.routing) return;
     if (this.botUserId !== null && event.user === this.botUserId) return;
     // A real user content message always carries channel, user, and ts;
     // a malformed payload missing any of them is dropped, not crashed on
     // (parseFloat(undefined) → NaN → toISOString() throws).
     if (!event.channel || !event.user || !event.ts) return;
 
-    const isDM = event.channel_type === 'im' || event.channel.startsWith('D');
+    let supportAccess: AccessAdmission | undefined;
+    if (this.accessPolicy) {
+      // Fresh admission precedes dedup and any wake decision.
+      const conversation = await this.requireHistoryConversation(event.channel);
+      if (conversation?.is_im && conversation.user !== event.user) return;
+      supportAccess = {version: 1, channelId: event.channel, readable: true,
+        kind: conversation!.is_im ? 'dm' : conversation!.is_private ? 'private_channel' : 'channel',
+        ...(conversation!.is_im ? {dmPeer: conversation!.user} : {joined: true as const})};
+    }
+
+    const isDM = supportAccess ? supportAccess.kind === 'dm' : event.channel_type === 'im' || event.channel.startsWith('D');
     // Only what Slack marks as a channel gets through, not merely what isn't marked a DM.
-    if (this.disableDms && event.channel_type !== 'channel' && event.channel_type !== 'group') return;
-    if (isDM && this.dmUsers && this.dmUsers.length > 0 && !this.dmUsers.includes(event.user)) {
+    if (!this.accessPolicy && this.disableDms && event.channel_type !== 'channel' && event.channel_type !== 'group') return;
+    if (!this.accessPolicy && isDM && this.dmUsers && this.dmUsers.length > 0 && !this.dmUsers.includes(event.user)) {
       return; // DM whitelist active and this sender isn't on it
     }
 
@@ -1357,14 +1566,24 @@ export class SlackAdapter {
     const mentionIds = extractSlackUserIds(event.text ?? '');
     await this.resolveUserNames([event.user, ...mentionIds]);
     const authorName = this.userNameCache.get(event.user) ?? event.user;
+    const senderKind: SenderKind = event.bot_id || event.subtype === 'bot_message' || this.botUsers.has(event.user)
+      ? 'bot' : this.humanUsers.has(event.user) || !this.routing ? 'human' : 'unknown';
+    const routing = this.routing?.receive({channel: event.channel, id: event.ts,
+      root: event.thread_ts || event.root?.thread_ts || event.ts, senderKind, authorId: event.user,
+      mentions: mentionIds, access: supportAccess!,
+      ...(supportAccess?.kind === 'dm' && senderKind === 'human' ? {dmAuthorizedPeer: event.user} : {})});
+    if (this.routing && routing === null) return;
 
+    // Under an explicit access policy a file is referred to by its ID, so one
+    // without a URL is still shown.
     const attachments: AttachmentRef[] = (event.files ?? [])
-      .filter((f): f is { url_private: string; name?: string; mimetype?: string } => !!f.url_private)
+      .filter((f) => this.hasExplicitAccessPolicy || !!f.url_private)
       .map((f) => {
         const name = f.name ?? 'attachment';
         const mime = f.mimetype || classifyExtension(name).mimeType;
         return {
-          path: f.url_private, // needs Bearer bot-token auth to fetch
+          ...(typeof f.id === 'string' && /^F[A-Z0-9]+$/.test(f.id) ? { fileId: f.id } : {}),
+          path: f.url_private ?? '', // needs Bearer bot-token auth to fetch
           name,
           mimeType: mime,
           isImage: mime.startsWith('image/'),
@@ -1377,6 +1596,8 @@ export class SlackAdapter {
       threadTs: event.thread_ts || event.root?.thread_ts || undefined,
       authorId: String(event.user),
       authorName,
+      ...(routing ? {routing, isBot: senderKind !== 'human', senderKind,
+        ...(event.bot_id ? {authorBotId: event.bot_id} : {})} : {}),
       content: event.text ?? '',
       cleanContent: formatSlackText(event.text ?? '', this.userNameCache),
       mentionIds,
@@ -1396,8 +1617,14 @@ export class SlackAdapter {
   /** Resolve user IDs into this adapter's cache (shared logic in content.ts).
    *  Returns the error of each lookup left uncached. */
   private async resolveUserNames(userIds: Array<string | undefined>): Promise<Map<string, unknown>> {
+    // Each answer also says whether the user is a bot, for recipient routing.
     return resolveSlackUserNames(
-      this.web,
+      {users: {info: async (args) => {
+        const info = await this.web.users.info(args);
+        if (info.user?.is_bot === true) this.botUsers.add(args.user);
+        if (info.user?.is_bot === false) this.humanUsers.add(args.user);
+        return info;
+      }}},
       this.userNameCache,
       userIds.filter((id): id is string => !!id),
     );

@@ -52,6 +52,7 @@ import {
   type SlackWait,
 } from './slack-adapter.js';
 import { toolDefinitions } from './tools.js';
+import { RECIPIENT_CAPABILITY, requireRecipientCapability } from './host-compatibility.js';
 import { withToolClasses } from './tool-classes.js';
 import { buildFeatureSets, buildServerCapabilities, featureSetForTool, MESSAGING_FEATURE_SET } from './feature-sets.js';
 import { ChannelManager, mcplChannelId, parseMcplChannelId, toDescriptor } from './channels.js';
@@ -59,6 +60,7 @@ import { StateTracker, type UploadedFile } from './state.js';
 import { CapabilityGrant } from './grant.js';
 import { McplRpcError, capabilityDenied } from './errors.js';
 import { explainSlackError, slackRefusal } from './slack-errors.js';
+import { associatedFileUrl, attachmentFetchHint } from './file-access.js';
 import {
   fetchAttachmentBytes,
   parseSlackAttachmentUrl,
@@ -161,6 +163,8 @@ export class SlackMcplServer {
   private channelManager = new ChannelManager();
   /** A new registration supersedes work started under an earlier grant. */
   private registrationGeneration = 0;
+  /** Invalidates asynchronous recipient effects across policy changes. */
+  private policyGeneration = 0;
   /** The latest registration while it runs, and whether it is still the
    *  current one. A refresh_channels then answers at once. */
   private registering: { isCurrent: () => boolean } | undefined;
@@ -203,12 +207,13 @@ export class SlackMcplServer {
   private lastChannelId: string | null = null;
 
   /** How many backscroll messages to fetch on first interaction. Tunable via
-   *  SLACK_BACKSCROLL_LIMIT; clamped to [1, 1000], default 50. */
+   *  SLACK_BACKSCROLL_LIMIT; zero disables automatic backscroll; clamped to
+   *  [0, 1000], default 50. */
   private get backscrollLimit(): number {
     const raw = process.env.SLACK_BACKSCROLL_LIMIT;
     if (!raw) return 50;
     const n = parseInt(raw, 10);
-    return Number.isFinite(n) && n > 0 && n <= 1000 ? n : 50;
+    return Number.isFinite(n) && n >= 0 && n <= 1000 ? n : 50;
   }
 
   /** Conversations muted with unsubscribe_channel while every member channel
@@ -225,8 +230,12 @@ export class SlackMcplServer {
    */
   constructor(
     private slack: SlackAdapter,
-    private opts: { subscribeMemberChannels?: boolean } = {},
+    private opts: { subscribeMemberChannels?: boolean; disabledTools?: readonly string[] } = {},
   ) {
+    // SLACK_DISABLED_TOOLS: hidden from tools/list and refused when called.
+    const names = new Set(toolDefinitions.map((tool) => tool.name));
+    if (opts.disabledTools?.some((name) => !names.has(name))) throw new Error('Unknown disabled tool');
+    this.opts = { ...opts, disabledTools: [...(opts.disabledTools ?? [])] };
     // Once for the server's life: the adapter keeps every handler it's
     // given, and each forwards to whichever connection is being served, so
     // one per connection forwarded each message once per connection served.
@@ -317,6 +326,19 @@ export class SlackMcplServer {
 
     // Detect MCPL support
     const clientMcpl = params?.capabilities?.experimental?.mcpl;
+    // Recipient routing needs a host that attests it (host-compatibility.ts);
+    // any other host is refused at initialize.
+    let recipientCapability;
+    if (this.slack.routing) {
+      try {
+        if (clientMcpl?.version !== '0.5') throw new Error('Recipient mode requires MCPL 0.5');
+        const experimental = params?.capabilities?.experimental as Record<string, unknown> | undefined;
+        recipientCapability = requireRecipientCapability(experimental?.[RECIPIENT_CAPABILITY], this.slack.botUserId!);
+      } catch (error) {
+        conn.sendError(msg.request.id, -32602, (error as Error).message);
+        throw error;
+      }
+    }
     this.mcplEnabled = clientMcpl !== undefined;
     dbg('handleInitialize', {
       mcplEnabled: this.mcplEnabled,
@@ -332,7 +354,7 @@ export class SlackMcplServer {
     const capabilities: InitializeCapabilities = {
       tools: {},
       ...(this.mcplEnabled && {
-        experimental: { mcpl: serverCaps },
+        experimental: { mcpl: serverCaps, ...(recipientCapability ? { [RECIPIENT_CAPABILITY]: recipientCapability } : {}) },
       }),
     };
 
@@ -374,7 +396,13 @@ export class SlackMcplServer {
     try {
       switch (req.method) {
         case 'tools/list': {
-          const listed = this.slack.dmsWritable ? toolDefinitions : toolDefinitions.filter((t) => t.name !== 'send_dm');
+          const listed = (this.slack.dmsWritable ? toolDefinitions : toolDefinitions.filter((t) => t.name !== 'send_dm'))
+            .filter((tool) => !this.opts.disabledTools?.includes(tool.name))
+            // An explicit access policy fetches an attachment by its
+            // conversation and file ID, never by a URL a message carries.
+            .map((tool) => this.slack.hasExplicitAccessPolicy && tool.name === 'fetch_attachment'
+              ? { ...tool, inputSchema: { ...tool.inputSchema, required: ['channelId', 'fileId'] } }
+              : tool);
           // MCPL RFC-008: each tool carries its class in _meta['mcpl/class'].
           conn.sendResponse(req.id, { tools: withToolClasses(listed) });
           break;
@@ -396,6 +424,7 @@ export class SlackMcplServer {
           // consequences, never a claim of entitlement. Only this form can
           // establish a ready state (§5.3).
           this.requireMcpl();
+          this.policyGeneration++;
           const couldRegister = this.grant.has('channels.register');
           const receipt = this.grant.apply(params as unknown as FeatureSetsUpdateParams, 'request');
           conn.sendResponse(req.id, receipt);
@@ -530,6 +559,7 @@ export class SlackMcplServer {
         // §6.7 Notification form: descriptive metadata only. Grant-bearing
         // updates (including the §5.3 initial policy) arrive as a Request.
         if (this.mcplEnabled) {
+          this.policyGeneration++;
           this.grant.apply(notif.params as unknown as FeatureSetsUpdateParams, 'notification');
         }
         break;
@@ -546,10 +576,21 @@ export class SlackMcplServer {
       case method.CHANNELS_TYPING:
       case 'notifications/typing': {
         if (this.mcplEnabled && !this.grant.has('channels.typing')) break;
-        const p = (notif.params ?? {}) as { channelId?: unknown; op?: unknown };
+        const p = (notif.params ?? {}) as { channelId?: unknown; op?: unknown; metadata?: { supportRecipientReplyRoot?: unknown } };
         if (typeof p.channelId !== 'string') break;
         const id = parseMcplChannelId(p.channelId)?.conversationId ?? p.channelId;
-        void this.slack.setThreadStatus(id, p.op === 'stop' ? undefined : this.lastIncomingRoot.get(id));
+        const frozenRoot = p.metadata?.supportRecipientReplyRoot;
+        if (this.slack.routing) {
+          if (typeof frozenRoot !== 'string' || !/^\d+\.\d+$/.test(frozenRoot)) break;
+          const connection = this.conn, generation = this.policyGeneration;
+          const isCurrent = () => this.conn === connection && !!connection && !connection.isClosed
+            && this.policyGeneration === generation && this.mcplEnabled && this.grant.has('channels.typing');
+          // Verify the explicit root for both start and stop. Never clear a
+          // different turn's status because an ambient arrival moved context.
+          void this.isThreadRoot(id, frozenRoot).then((isRoot) => {
+            if (isCurrent() && isRoot) return this.slack.setRecipientThreadStatus(id, frozenRoot, p.op === 'stop', isCurrent);
+          }).catch(() => {});
+        } else void this.slack.setThreadStatus(id, p.op === 'stop' ? undefined : this.lastIncomingRoot.get(id));
         break;
       }
 
@@ -572,6 +613,10 @@ export class SlackMcplServer {
     // are not subject to a grant — there is none to consult.
     if (this.mcplEnabled && !this.grant.has('tools')) {
       throw capabilityDenied('tools');
+    }
+
+    if (this.opts.disabledTools?.includes(name)) {
+      return { content: [textContent(`Tool '${name}' is disabled by operator configuration`)], isError: true };
     }
 
     // Check feature set permission
@@ -802,7 +847,16 @@ export class SlackMcplServer {
       case 'fetch_attachment': {
         // The bot token must only be sent to files.slack.com — never to
         // workspace hosts. Enforcement lives in parseSlackAttachmentUrl.
-        const url = parseSlackAttachmentUrl(this.requireString(args, 'url'));
+        let url: URL;
+        if (this.slack.hasExplicitAccessPolicy) {
+          const channelId = this.requireString(args, 'channelId');
+          const fileId = this.requireString(args, 'fileId');
+          // Fresh membership and scope checks precede metadata or byte access.
+          await this.slack.requireReadableConversation(channelId);
+          url = associatedFileUrl(await this.slack.getFileInfo(fileId), channelId);
+        } else {
+          url = parseSlackAttachmentUrl(this.requireString(args, 'url'));
+        }
         const botToken = process.env.SLACK_BOT_TOKEN || '';
         const headers: Record<string, string> = botToken
           ? { Authorization: `Bearer ${botToken}` }
@@ -814,7 +868,7 @@ export class SlackMcplServer {
         // call.
         assertRequestFits('The download from files.slack.com', SLACK_CLIENT_OPTIONS.timeout);
         return toFetchResult(await fetchAttachmentBytes(url.toString(), fileName, {
-          headers,
+          headers, ...(this.slack.hasExplicitAccessPolicy ? { redirect: 'error' as const } : {}),
           signal: AbortSignal.timeout(SLACK_CLIENT_OPTIONS.timeout),
         }));
       }
@@ -1221,8 +1275,15 @@ export class SlackMcplServer {
     }
 
     // Reply in the thread of the most recent incoming message on this
-    // conversation; top-level when it wasn't threaded.
-    const threadTs = this.lastIncomingThreadTs.get(parsed.conversationId);
+    // conversation; top-level when it wasn't threaded. With recipient
+    // routing, only in the thread the host names, once Slack confirms it is a
+    // thread's parent.
+    const frozenTarget = (params as ChannelsPublishParams & { threadId?: string }).threadId;
+    if (this.slack.routing && (typeof frozenTarget !== 'string' || !/^\d+\.\d+$/.test(frozenTarget))) {
+      return { delivered: false };
+    }
+    const threadTs = this.slack.routing ? frozenTarget : this.lastIncomingThreadTs.get(parsed.conversationId);
+    if (this.slack.routing && !(await this.isThreadRoot(parsed.conversationId, threadTs!))) return { delivered: false };
     Object.assign(published, { channelId: parsed.conversationId, threadTs });
     const result = await this.slack.sendMessage(
       parsed.conversationId,
@@ -1234,6 +1295,14 @@ export class SlackMcplServer {
     dbg('handlePublish:sent', { channelId: params.channelId, messageId: result.messageId, threadTs });
 
     return { delivered: true, messageId: result.messageId };
+  }
+
+  /** Whether `root` is a thread's parent in `channelId`, as fetch_thread's
+   *  read finds it now, with every history read's access checks: the frozen
+   *  root recipient routing replies and shows typing in. */
+  private async isThreadRoot(channelId: string, root: string): Promise<boolean> {
+    const parent = (await this.slack.readThread(channelId, root, { limit: 1 })).messages[0];
+    return parent?.id === root && !parent.threadTs;
   }
 
   // ── Rollback ──
@@ -1351,7 +1420,7 @@ export class SlackMcplServer {
         }
         return;
       }
-      if (msg.mentionsBot || msg.isDM) void this.slack.acknowledge(msg.channelId, msg.id);
+      if (msg.routing ? msg.routing.wakeAllowed : msg.mentionsBot || msg.isDM) void this.slack.acknowledge(msg.channelId, msg.id);
       const previous = this.forwarding.get(msg.channelId) ?? Promise.resolve();
       const pending = previous.then(() => this.handleSlackMessage(msg, conn)).catch((err) => {
         console.error('[slack-mcpl] Error forwarding Slack message:', err);
@@ -1366,9 +1435,12 @@ export class SlackMcplServer {
   /** Render attachment refs as a text block the agent can act on. Slack
    *  serves url_private behind bot auth, so bytes are fetched on demand via
    *  fetch_attachment rather than inlined here. */
-  private attachmentNote(attachments: AttachmentRef[]): string {
+  private attachmentNote(attachments: AttachmentRef[], channelId: string): string {
+    // An explicit access policy refers to a file by its conversation and ID,
+    // never by the URL the message carries.
     const lines = attachments.map((a) =>
-      `- ${a.name} (${a.mimeType})${a.isImage ? ' — image' : ''}, fetchable via fetch_attachment: ${a.path}`,
+      `- ${a.name} (${a.mimeType})${a.isImage ? ' — image' : ''}` +
+        (this.slack.hasExplicitAccessPolicy ? attachmentFetchHint(channelId, a.fileId) : `, fetchable via fetch_attachment: ${a.path}`),
     );
     return `[attachments: ${attachments.length}]\n${lines.join('\n')}`;
   }
@@ -1422,7 +1494,8 @@ export class SlackMcplServer {
     // messages only flow from subscribed conversations — otherwise every
     // visible channel would pour unbounded noise into context. The wake
     // decision is the host's, via the chat:* tags below.
-    const isAddressed = msg.mentionsBot || msg.isDM;
+    // With recipient routing, the ledger's receipt says whether it wakes.
+    const isAddressed = msg.routing ? msg.routing.wakeAllowed : msg.mentionsBot || msg.isDM;
     const releaseAck = () => {
       if (isAddressed) void this.slack.clearAck(msg.channelId, msg.id);
     };
@@ -1457,7 +1530,7 @@ export class SlackMcplServer {
     // A DM's header says DM and a DM gets no note, so a DM looks up none.
     let meta: Awaited<ReturnType<typeof this.slack.getConversationMeta>> | undefined;
     let backscroll: Awaited<ReturnType<typeof this.slack.fetchHistory>>['messages'] = [];
-    if (isFirstInteraction && isAddressed) {
+    if (isFirstInteraction && isAddressed && this.backscrollLimit > 0) {
       try {
         const res = await this.deliveryLookup(this.slack.fetchHistory(msg.channelId, {
           limit: this.backscrollLimit,
@@ -1532,13 +1605,17 @@ export class SlackMcplServer {
     });
     // The context is recorded as the message goes out, so the next message
     // is compared with what this peer was sent last.
-    this.lastIncomingRoot.set(msg.channelId, msg.threadTs ?? msg.id);
+    if (!msg.routing || msg.routing.wakeAllowed) this.lastIncomingRoot.set(msg.channelId, msg.threadTs ?? msg.id);
     this.lastChannelId = msg.channelId;
-    const renderedContent = `${prefixBlock}${location}${msg.authorName}: ${msg.cleanContent}`;
+    const sourceLabel = msg.routing
+      ? `[Slack source user=${msg.authorId} kind=${msg.senderKind} authority=${msg.routing.authority}; ` +
+        `${msg.routing.wakeAllowed ? 'addressed to this agent' : 'context only; no response requested'}]\n`
+      : '';
+    const renderedContent = `${prefixBlock}${location}${sourceLabel}${msg.authorName}: ${msg.cleanContent}`;
 
     const contentBlocks: ContentBlock[] = [textContent(renderedContent)];
     if (msg.attachments.length > 0) {
-      contentBlocks.push(textContent(this.attachmentNote(msg.attachments)));
+      contentBlocks.push(textContent(this.attachmentNote(msg.attachments, msg.channelId)));
     }
 
     // MCPL RFC-001 event tags — reserved chat:* core, umbrellas included.
@@ -1549,7 +1626,7 @@ export class SlackMcplServer {
       if (msg.mentionsBot) t.add('chat:mention');
       if (msg.isDM) { t.add('chat:dm'); t.add('chat:private'); }
       t.add(isAddressed ? 'chat:addressed' : 'chat:ambient');
-      t.add('chat:from-human');
+      t.add(msg.senderKind === 'unknown' ? 'slack:from-unknown' : msg.isBot ? 'chat:from-bot' : 'chat:from-human');
       if (msg.threadTs) t.add('chat:thread');
       for (const a of msg.attachments) {
         t.add(a.isImage ? 'chat:has-image' : 'chat:has-file');
@@ -1558,6 +1635,9 @@ export class SlackMcplServer {
     })();
 
     const metadata = {
+      ...(msg.routing ?? {}),
+      ...(msg.routing ? { channelId: msg.channelId, messageId: msg.id, isBot: msg.isBot,
+        senderKind: msg.senderKind, authorId: msg.authorId, authorBotId: msg.authorBotId } : {}),
       mentionIds: msg.mentionIds,
       mentioned: msg.mentionsBot,
       isMention: msg.mentionsBot,
@@ -1584,7 +1664,7 @@ export class SlackMcplServer {
       if (autoSubscribe && !this.unsubscribedByAgent.has(msg.channelId)) this.subscribe(msg.channelId);
       // Acceptance records what this peer received, even if its grant changed.
       if (this.conn !== conn) return;
-      this.lastIncomingThreadTs.set(msg.channelId, msg.threadTs);
+      if (!msg.routing || msg.routing.wakeAllowed) this.lastIncomingThreadTs.set(msg.channelId, msg.threadTs);
       this.forwardedWatermark.set(msg.channelId, msg.id);
       if (noteReadOnly) this.readOnlyNoted.add(msg.channelId);
     };
@@ -1621,6 +1701,7 @@ export class SlackMcplServer {
         eventId: `slack_msg_${msg.channelId}_${msg.id}`,
         timestamp: msg.timestamp.toISOString(),
         origin: {
+          ...metadata,
           source: 'slack',
           messageId: msg.id,
           channelId: msg.channelId,

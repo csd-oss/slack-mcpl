@@ -113,6 +113,51 @@ OAuth flow so the installed token receives the new scope. Editing the app's
 scope list alone does not update the token. Without the scope, Slack refuses
 uploads with `missing_scope`.
 
+## Explicit access policy
+
+Embedded callers can opt in with `connectSlack({ ..., accessPolicy })`, or call
+`adapter.configureAccessPolicy(policy)` once before starting Socket Mode:
+
+```ts
+adapter.configureAccessPolicy({
+  writeChannels: ['CWRITABLE'],
+  dmUsers: [],
+  readJoinedChannels: true,
+});
+```
+
+This separates joined-channel reads from configured channel writes and allowed
+one-to-one DM peers. An empty `dmUsers` list denies all DMs; group DMs are denied.
+Each incoming event and operation validates fresh conversation metadata and the
+required token scopes. Listing includes only confirmed joined channels and
+allowed DMs, even with `includeNonMember`. User-directory lookup remains global
+metadata discovery with `users:read`; it does not grant message access. Legacy
+write allowlists still apply as an additional restriction. Without an explicit
+policy, existing flags and behavior are unchanged.
+
+With an explicit policy, its `dmUsers` list is authoritative for DM read/write
+admission; the legacy `SLACK_DM_USERS` and `SLACK_DISABLE_DMS` controls describe
+the no-policy mode. Use an empty policy `dmUsers` list to disable DMs explicitly.
+
+An optional `historyMembershipFallbackChannels` list names exact write destinations
+that the operator has independently verified are public. If `channels:read` is
+absent, each operation proves fresh membership with a successful bot-token
+`conversations.history({ channel, limit: 1 })` call; `fetch_history` and
+`fetch_thread` make it before their first page, and it is not one of their pages.
+A `C` prefix or history success
+cannot establish public visibility. Fallback never caches membership, invents
+scopes, or applies to unconfigured channels, DMs or private-channel metadata;
+normal metadata checks remain when `channels:read` is present. Refusals, rate
+limits and unknown scopes fail closed.
+
+With this profile, `fetch_attachment` requires `channelId` and `fileId` rather
+than trusting a supplied URL. It checks fresh readable membership, requires
+`files:read`, verifies that `files.info` associates the exact file with that
+conversation, and downloads only Slack's canonical private URL with redirects
+refused. Live messages, history, threads and backscroll provide these IDs;
+missing file IDs are marked unavailable. Without the profile, URL-only fetches
+remain compatible.
+
 ## Reply to a specific thread
 
 When answering a particular message, use `reply_message` to select its thread explicitly. Automatic prose delivery through `channels/publish` carries no thread or triggering message ID. The server uses the thread of the last message it passed to the host from that Slack conversation instead, whether or not the host accepted it, so another message can redirect the reply to a different thread, or to the channel's top level ([#6](https://github.com/anima-research/slack-mcpl/issues/6)). The server keeps that in memory only: after a restart, a publish goes to the top level until the server passes on a message from the conversation.
@@ -313,8 +358,59 @@ Switches take `true`/`false` (also `1`/`0`, `yes`/`no`); any other value stops t
 | `SLACK_DISABLE_DMS` | no | `true` drops incoming DMs and group DMs, refuses every write to them and both history reads on them, and leaves them out of `conversations.list`, so they are neither listed nor registered; `send_dm` is not offered. Only a conversation Slack confirms as a channel passes: a group DM ID looks like a channel ID, and a user ID posts into that user's DM. An unknown ID is asked about until Slack confirms it. One Slack won't describe is refused; when the question can't be answered just now (a rate limit, a failure on the way or on Slack's side, or too little of the call's time), nothing is written, and the error says why and that the call can be made again. Incoming events pass only when Slack marks them `channel` or `group`. Takes `true` or `false` (also `1`/`0`, `yes`/`no`); unset is off, and any other value, empty included, stops startup |
 | `SLACK_ACK_REACTION` | no | Emoji name (e.g. `eyes`) put on a message that addresses the bot. It means "received": it is removed at the bot's next post in that conversation, after 10 minutes, or at once if the host does not accept the message. A removal that fails without an answer from Slack (a rate limit, an HTTP error or a network failure) is retried every minute, 5 times at most; one Slack refuses is dropped. An add that fails isn't tried again. One that may have landed is removed as usual: `already_reacted` says it's there, and Slack's failure while handling it (`internal_error`, `fatal_error`, `service_unavailable`), an HTTP error, or a failure in transit after the request may have reached Slack leaves it unknown. One Slack refused, rate-limited or received only in part (`request_timeout`), one whose connection was never made, and one this server refused itself, such as outside `SLACK_SEND_CHANNELS`, isn't there. On SIGTERM, SIGINT or the host closing stdin, pending reactions are removed (5 s at most); a crash cannot, so removal is best-effort. For a typing signal see **Typing** above. |
 | `SLACK_SUBSCRIPTIONS_FILE` | no | JSON file persisting ambient subscriptions across restarts: an array of IDs, or `{subscribed, muted}` while anything is muted (older versions read the object form as empty) |
-| `SLACK_BACKSCROLL_LIMIT` | no | Messages fetched on first interaction with a conversation (default 50) |
+| `SLACK_BACKSCROLL_LIMIT` | no | Messages fetched on first interaction with a conversation (default 50; `0` disables automatic backscroll) |
 | `SLACK_MCPL_DEBUG_LOG` | no | Absolute path for a diagnostic file log |
+| `SLACK_ACCESS_POLICY` | no | Explicit JSON policy: `readJoinedChannels`, `writeChannels`, `dmUsers`, optional `historyMembershipFallbackChannels`. Omit to retain legacy controls. See the access-policy section above. |
+| `SLACK_RECIPIENT_ROUTING` | no | Opt-in JSON containing absolute private `stateFile`, installation `namespace`, optional `expectedBotUserId`. Requires explicit access policy, Node 24+ on POSIX, and a compatible recipient-aware MCPL host. |
+| `SLACK_DISABLED_TOOLS` | no | Comma-separated known tool names to hide and refuse, including direct invocation. For example, operators may disable subscription editing while retaining joined-channel ambient reads. |
+
+## Optional recipient-aware mode
+
+Ordinary MCP tools and MCPL defaults remain available without this mode. To opt
+in, install an explicit access policy and give this agent a private directory
+containing its own durable receipts file. The directory must already exist, be
+owned by the process user and have no group/other permissions. Do not share this
+file across receiving identities or installations.
+
+The following are illustrative policy values, not installation defaults:
+
+```json
+{
+  "SLACK_ACCESS_POLICY": "{\"readJoinedChannels\":true,\"writeChannels\":[\"CTEAM\"],\"dmUsers\":[\"UOPERATOR\"]}",
+  "SLACK_RECIPIENT_ROUTING": "{\"stateFile\":\"/private/agent-state/receipts.sqlite\",\"namespace\":\"workspace-receiver\",\"expectedBotUserId\":\"URECEIVER\"}",
+  "SLACK_SUBSCRIBE_MEMBER_CHANNELS": "true",
+  "SLACK_BACKSCROLL_LIMIT": "0",
+  "SLACK_DISABLED_TOOLS": "subscribe_channel,unsubscribe_channel"
+}
+```
+
+Authentication resolves the actual bot identity; an expected-ID mismatch refuses
+configuration. The namespace binds local state, not a Slack workspace identity
+attestation. Existing receipt and unrelated legacy tables are preserved. An old
+installation may reuse its former anchor-channel string as the namespace to keep
+its ledger identity binding. Admission is at most once: a transport failure after
+receipt commit can lose a delivery. Never reset receipts or replay history as a
+code rollback.
+
+In this mode an admitted own mention can wake regardless of human, bot or unknown
+sender classification. There is no human arming, peer count or expiry gate.
+Unaddressed messages remain context only. One-to-one DMs can wake only through a
+verified human counterpart on the configured peer list. Read access, addressing
+and operational authority remain separate; provenance never grants owner powers.
+
+The host must advertise and receive acknowledgment of the experimental
+`slackRecipientRouting` v1 contract, validate both delivery lanes, store context
+without scheduling a new turn, and preserve a frozen conversation/thread target
+through its inference lifecycle. Rootless automatic publication/status is refused;
+recipient typing verifies its parent and cannot clear a different turn's status.
+Pending status operations are discarded across connection or policy changes.
+
+See [HOST-COMPATIBILITY.md](docs/HOST-COMPATIBILITY.md) for the exported bridge,
+descriptor and required host hooks. The helper and synthetic lifecycle tests do
+not install or qualify an arbitrary Connectome/framework version. Existing
+deployments using private host patches require a separately reviewed adapter
+migration before switching to this connector. Setting environment readiness
+markers does not implement those hooks.
 
 ## Tests
 

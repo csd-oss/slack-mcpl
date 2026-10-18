@@ -25,7 +25,11 @@
  *   SLACK_SUBSCRIPTIONS_FILE - Optional: JSON file persisting ambient-channel
  *                       subscriptions across restarts
  *   SLACK_BACKSCROLL_LIMIT   - Optional: messages fetched on first interaction
- *                       with a conversation (default 50)
+ *                       with a conversation (default 50; 0 disables)
+ *   SLACK_ACCESS_POLICY - Optional: explicit read/write/DM policy JSON
+ *   SLACK_RECIPIENT_ROUTING - Optional: private stateFile/namespace/expectedBotUserId JSON;
+ *                       requires explicit access policy and compatible MCPL host
+ *   SLACK_DISABLED_TOOLS - Optional: comma-separated tool names to hide/refuse
  */
 
 import * as net from 'node:net';
@@ -34,6 +38,7 @@ import { connectSlack } from './slack-adapter.js';
 import { SlackMcplServer } from './server.js';
 import { booleanFlag } from './config.js';
 import { serveTcp } from './tcp.js';
+import { optionalConfiguration } from './configuration.js';
 
 /** A yes/no switch from the environment. A bad value stops the server with
  *  one line naming it: it is the operator's to fix, not a crash to trace. */
@@ -65,6 +70,7 @@ async function main(): Promise<void> {
   }
 
   const dmUsers = process.env.SLACK_DM_USERS?.split(',').map((s) => s.trim()).filter(Boolean);
+  const optional = optionalConfiguration(process.env);
 
   // Connect Slack first: auth.test resolves the bot's identity, then Socket
   // Mode comes up so no events are missed once the host attaches.
@@ -77,17 +83,19 @@ async function main(): Promise<void> {
   const disableDms = flag('SLACK_DISABLE_DMS');
   const subscribeMemberChannels = flag('SLACK_SUBSCRIBE_MEMBER_CHANNELS');
   const ackReaction = process.env.SLACK_ACK_REACTION?.replace(/:/g, '').trim() || undefined;
-  const slack = await connectSlack({ botToken, appToken, dmUsers, sendChannels, disableDms, ackReaction });
+  const slack = await connectSlack({ botToken, appToken, dmUsers, sendChannels, disableDms, ackReaction,
+    accessPolicy: optional.accessPolicy, recipientRouting: optional.recipientRouting });
   const server = new SlackMcplServer(slack, {
     subscribeMemberChannels,
+    disabledTools: optional.disabledTools,
   });
   await slack.start();
   console.error(
     `[slack-mcpl] Slack connected as bot ${slack.botUserId} in workspace "${slack.teamName}"`,
   );
   console.error(
-    `[slack-mcpl] writes: ${sendChannels?.length ? `only ${sendChannels.join(', ')}` : 'anywhere'}; ` +
-      `DMs: ${disableDms ? 'off' : 'on'}`,
+    `[slack-mcpl] writes: ${optional.accessPolicy ? 'explicit access policy' : sendChannels?.length ? `only ${sendChannels.join(', ')}` : 'anywhere'}; ` +
+      `DMs: ${optional.accessPolicy ? optional.accessPolicy.dmUsers.length ? 'explicit peers' : 'off' : disableDms ? 'off' : 'on'}`,
   );
 
   // Take pending acknowledgement reactions off before exiting, for 5 s at
