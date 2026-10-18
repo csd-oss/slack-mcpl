@@ -676,8 +676,15 @@ export class SlackAdapter {
   async listConversations(includeNonMember = false, waitOut?: SlackWaitOut): Promise<SlackConversationInfo[]> {
     const out: SlackConversationInfo[] = [];
     for (const id of this.accessPolicy?.historyMembershipFallbacks(this.scopes) ?? []) {
-      const info = await this.describeConversation(await this.readAccessConversation(id));
-      if (info) out.push(info);
+      // A pinned channel whose fresh proof fails (the bot left it, it was
+      // archived, Slack refused) is left out, fail-closed, and the listing
+      // goes on: one stale pin must not hide every other conversation.
+      try {
+        const info = await this.describeConversation(await this.readAccessConversation(id));
+        if (info) out.push(info);
+      } catch (err) {
+        console.error(`[slack-mcpl] Pinned conversation ${id} is not listed: ${(err as Error)?.message ?? String(err)}`);
+      }
     }
     // Slack refuses the whole call when one type lacks its read scope.
     // Keep the type set stable across pagination; refreshed scopes apply to
