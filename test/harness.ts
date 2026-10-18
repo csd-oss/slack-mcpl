@@ -17,6 +17,7 @@ export const FULL_GRANT = [
   'channels.publish',
   'channels.incoming',
   'pushEvents',
+  'channels.typing',
 ];
 
 interface FakeSocket extends SlackSocketLike {
@@ -69,9 +70,17 @@ export function uploadEndpoint(): Promise<{ url: string; bytes: Map<string, Buff
   return byteEndpoint;
 }
 
-function fakeWeb(posts: unknown[], reactions: string[], uploads: unknown[], deletedMessages: unknown[], deletedFiles: string[]): SlackWebLike {
+function fakeWeb(posts: unknown[], reactions: string[], uploads: unknown[], deletedMessages: unknown[], deletedFiles: string[], statuses: string[]): SlackWebLike {
   let started = 0;
   return {
+    assistant: {
+      threads: {
+        async setStatus({ channel_id, thread_ts, status }) {
+          statuses.push(`${channel_id}:${thread_ts}:${status}`);
+          return {};
+        },
+      },
+    },
     conversations: {
       async list() {
         return { channels: [{ id: 'C1', name: 'general', is_member: true, is_im: false, is_mpim: false }] };
@@ -167,6 +176,8 @@ export interface Harness {
   uploads: unknown[];
   deletedMessages: unknown[];
   deletedFiles: string[];
+  /** assistant.threads.setStatus calls, as `<channel>:<thread_ts>:<status>`. */
+  statuses: string[];
   served: Promise<void>;
   close(): Promise<void>;
 }
@@ -179,11 +190,12 @@ export function fakeSlack(opts: HarnessOptions = {}) {
   const uploads: unknown[] = [];
   const deletedMessages: unknown[] = [];
   const deletedFiles: string[] = [];
+  const statuses: string[] = [];
   const slack = new SlackAdapter(
-    fakeWeb(posts, reactions, uploads, deletedMessages, deletedFiles), socket, 'UBOT', 'acme',
+    fakeWeb(posts, reactions, uploads, deletedMessages, deletedFiles, statuses), socket, 'UBOT', 'acme',
     undefined, opts.sendChannels, opts.disableDms, opts.ackReaction,
   );
-  return { slack, socket, posts, reactions, uploads, deletedMessages, deletedFiles };
+  return { slack, socket, posts, reactions, uploads, deletedMessages, deletedFiles, statuses };
 }
 
 /** Answer the server's requests on `host` as an MCPL host would; returns the
@@ -237,10 +249,10 @@ export function connectHost(server: SlackMcplServer, opts: HarnessOptions = {}) 
 }
 
 export function harness(opts: HarnessOptions = {}): Harness {
-  const { slack, socket, posts, reactions, uploads, deletedMessages, deletedFiles } = fakeSlack(opts);
+  const { slack, socket, posts, reactions, uploads, deletedMessages, deletedFiles, statuses } = fakeSlack(opts);
   const server = new SlackMcplServer(slack, { subscribeMemberChannels: opts.subscribeMemberChannels });
   const { host, hostSaw, served, close } = connectHost(server, opts);
-  return { server, socket, host, hostSaw, posts, reactions, uploads, deletedMessages, deletedFiles, served, close };
+  return { server, socket, host, hostSaw, posts, reactions, uploads, deletedMessages, deletedFiles, statuses, served, close };
 }
 
 export async function initialize(h: { host: McplConnection }, mcpl: boolean) {
