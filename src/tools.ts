@@ -2,6 +2,15 @@
  * MCP tool definitions and input types for Slack operations.
  * These tools work in both MCP and MCPL mode.
  */
+import {AUTHOR_ID, READ_LIMITS} from './history-read.js';
+
+const readProperties = {
+  maxScanned: {type: 'integer', ...READ_LIMITS.maxScanned, description: 'Candidate messages scanned per call, independently of returned matches'},
+  maxBytes: {type: 'integer', ...READ_LIMITS.maxBytes, description: 'Maximum UTF-8 bytes of the complete result JSON. A message that does not fit beside the ones before it is left for the next call'},
+  oldest: {type: 'string', description: 'Exclusive lower Slack timestamp bound'},
+  latest: {type: 'string', description: 'Exclusive upper Slack timestamp bound'},
+  cursor: {type: 'string', description: 'pagination.nextCursor from an earlier call, with the same channel, thread, time bounds and filters'},
+};
 
 export interface ToolDefinition {
   name: string;
@@ -10,6 +19,7 @@ export interface ToolDefinition {
     type: 'object';
     properties: Record<string, unknown>;
     required?: string[];
+    additionalProperties?: boolean;
   };
   /** MCP `_meta`. `tools/list` adds `mcpl/class` from src/tool-classes.ts. */
   _meta?: Record<string, unknown>;
@@ -151,20 +161,19 @@ export const toolDefinitions: ToolDefinition[] = [
       'Fetch message history from a Slack conversation, oldest-first. Covers channel-level ' +
       'messages only — replies inside threads are not returned (use fetch_thread for those), ' +
       'so an active thread can look quiet here. Use `oldest`/`latest` (message IDs / ts values) ' +
-      'to bound the range; pagination is automatic.',
+      'to bound the range. Substring and exact author-ID predicates are ANDed. Check pagination.scanComplete ' +
+      'and stopReason: zero bounded matches does not prove absence. To go on to older messages, call again with ' +
+      'the same arguments and cursor set to pagination.nextCursor.',
     inputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
+        ...readProperties,
         channelId: { type: 'string', description: 'Slack conversation ID' },
-        limit: { type: 'number', description: 'Max messages to fetch (default 50)' },
-        oldest: {
-          type: 'string',
-          description: 'Only fetch messages newer than this ts (exclusive). Use the newest ID you already have.',
-        },
-        latest: {
-          type: 'string',
-          description: 'Only fetch messages older than this ts (exclusive). Use the oldest ID you already have to page back.',
-        },
+        limit: { type: 'integer', ...READ_LIMITS.limit, default: 50, description: 'Maximum matching messages returned per call' },
+        textContains: {type: 'string', minLength: 1, maxLength: 256, description: "Literal substring of a message's content as returned, except that a mentioned user appears only by their user ID, as @U… (uid:U…), not by name; case-insensitive by default; no regex"},
+        caseSensitive: {type: 'boolean', default: false, description: 'Use exact case for textContains; otherwise JavaScript Unicode toLowerCase, without normalization'},
+        authorIds: {type: 'array', minItems: 1, maxItems: 50, items: {type: 'string', pattern: AUTHOR_ID.source}, description: "Match any exact author ID, a message's authorId or authorBotId, AND textContains; missing authors do not match"},
       },
       required: ['channelId'],
     },
@@ -172,14 +181,17 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: 'fetch_thread',
     description:
-      'Fetch all replies in a Slack thread, oldest-first (the parent message comes first). ' +
-      'Use the thread\'s parent message ID — incoming thread replies carry it as threadId.',
+      'Fetch a bounded part of one Slack thread, oldest-first (parent first on the initial unbounded-range call). ' +
+      'Use the parent ID. Check pagination.scanComplete and stopReason. To go on to newer replies, call again with ' +
+      'the same arguments and cursor set to pagination.nextCursor.',
     inputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
+        ...readProperties,
         channelId: { type: 'string', description: 'Slack conversation ID' },
         threadTs: { type: 'string', description: 'Parent message ID (ts) of the thread' },
-        limit: { type: 'number', description: 'Max messages to fetch (default 100)' },
+        limit: { type: 'integer', ...READ_LIMITS.limit, default: 100, description: 'Maximum messages returned, including the parent when present' },
       },
       required: ['channelId', 'threadTs'],
     },

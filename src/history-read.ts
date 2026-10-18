@@ -1,0 +1,312 @@
+/**
+ * fetch_history's and fetch_thread's reads: bounded, filtered, and saying
+ * whether they covered their range, with a cursor to continue. Each page is a
+ * request through the adapter's client, so it keeps the call's time and wait
+ * budget like every other request. Backscroll keeps the adapter's own pager.
+ */
+import { createHash } from 'node:crypto';
+import { formatSlackText, type SlackHistoryMessage } from './content.js';
+import type { HistoryMessage } from './slack-adapter.js';
+
+type Kind = 'history' | 'thread';
+export type StopReason =
+  | 'exhausted' | 'match_limit' | 'scan_limit' | 'byte_limit' | 'time_limit' | 'rate_limited' | 'pagination_stalled';
+
+export const READ_LIMITS = {
+  limit: { minimum: 1, maximum: 1000 },
+  maxScanned: { minimum: 1, maximum: 10000, default: 1000 },
+  maxBytes: { minimum: 2048, maximum: 1048576, default: 65536 },
+} as const;
+
+/** The most messages Slack returns in one page of either method. */
+const PAGE_SIZE = 200;
+
+/** A Slack timestamp, a message's ts. */
+export const SLACK_TS = /^\d{1,16}(?:\.\d{1,6})?$/;
+const isTimestamp = (value: unknown): value is string =>
+  typeof value === 'string' && SLACK_TS.test(value) && Number.isFinite(new Date(Number(value) * 1000).getTime());
+function timestamp(value: unknown, name: string): string {
+  if (!isTimestamp(value)) throw new Error(`${name} must be a Slack timestamp`);
+  return value;
+}
+/** A message's ts, as Slack gave it: a read can't place a message without
+ *  one, or an entry that isn't a message at all. */
+function messageTs(m: SlackHistoryMessage | null | undefined): string {
+  const ts = m?.ts;
+  if (!isTimestamp(ts)) {
+    throw new Error('No messages were returned: Slack gave a message without a valid ts, so this read can\'t place it');
+  }
+  return ts;
+}
+function compareTs(a: string, b: string): number {
+  const micros = (s: string) => {
+    const [seconds, fraction = ''] = s.split('.');
+    return BigInt(seconds!) * 1000000n + BigInt(fraction.padEnd(6, '0'));
+  };
+  const x = micros(a), y = micros(b);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/** An author's id: a user's (U or W) or a bot's (B), as a record's authorId
+ *  and authorBotId give them. */
+export const AUTHOR_ID = /^[UWB][A-Z0-9]+$/;
+
+/** The names a filter matches mentions by: each user's own ID. A filter
+ *  matches a message's text formatted as its content is, except that a
+ *  mentioned user reads @U… (uid:U…), with or without a label Slack sent, so a
+ *  match never depends on a lookup or on what the name cache holds. */
+const BY_ID = new (class extends Map<string, string> {
+  override get(id: string): string {
+    return id;
+  }
+})();
+
+/** A read's arguments, checked before Slack is asked: an argument this tool
+ *  doesn't take is refused, so a misspelled filter can't read as no filter. */
+export type ReadOptions = ReturnType<typeof readOptions>;
+export function readOptions(args: Record<string, unknown>, kind: Kind, channelId: string, threadTs?: string) {
+  const allowed = new Set(['channelId', 'limit', 'oldest', 'latest', 'cursor', ...Object.keys(READ_LIMITS),
+    ...(kind === 'history' ? ['textContains', 'caseSensitive', 'authorIds'] : ['threadTs'])]);
+  const unknown = Object.keys(args).filter((key) => !allowed.has(key));
+  if (unknown.length) throw new Error(`Unknown argument${unknown.length === 1 ? '' : 's'}: ${unknown.join(', ')}`);
+  if (!/^[CGD][A-Z0-9]+$/.test(channelId)) throw new Error('channelId must be a Slack conversation ID');
+  if (kind === 'thread') timestamp(threadTs, 'threadTs');
+  const limits = {} as Record<keyof typeof READ_LIMITS, number>;
+  for (const [name, bounds] of Object.entries(READ_LIMITS)) {
+    const value = args[name] === undefined
+      ? (name === 'limit' ? (kind === 'history' ? 50 : 100) : ('default' in bounds ? bounds.default : undefined))
+      : args[name];
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < bounds.minimum || value > bounds.maximum) {
+      throw new Error(`${name} must be an integer from ${bounds.minimum} to ${bounds.maximum}`);
+    }
+    limits[name as keyof typeof READ_LIMITS] = value;
+  }
+  const oldest = args.oldest === undefined ? undefined : timestamp(args.oldest, 'oldest');
+  const latest = args.latest === undefined ? undefined : timestamp(args.latest, 'latest');
+  if (oldest && latest && compareTs(oldest, latest) >= 0) throw new Error('oldest must precede latest');
+  // Characters as the schema's maxLength counts them: code points.
+  if (args.textContains !== undefined &&
+    (typeof args.textContains !== 'string' || [...args.textContains].length < 1 || [...args.textContains].length > 256)) {
+    throw new Error('textContains must contain 1 to 256 characters');
+  }
+  if (args.caseSensitive !== undefined && typeof args.caseSensitive !== 'boolean') throw new Error('caseSensitive must be a boolean');
+  if (args.authorIds !== undefined && (!Array.isArray(args.authorIds) || args.authorIds.length < 1 || args.authorIds.length > 50 ||
+    !args.authorIds.every((id) => typeof id === 'string' && AUTHOR_ID.test(id)))) {
+    throw new Error('authorIds must contain 1 to 50 Slack user or bot IDs');
+  }
+  const query = {
+    kind, channelId, threadTs, oldest, latest,
+    textContains: args.textContains as string | undefined,
+    caseSensitive: args.caseSensitive === true,
+    authorIds: [...new Set((args.authorIds ?? []) as string[])].sort(),
+  };
+  const queryHash = createHash('sha256').update(JSON.stringify(query)).digest('hex').slice(0, 32);
+  const at = args.cursor === undefined ? undefined : cursorPosition(args.cursor, queryHash);
+  return { ...limits, ...query, queryHash, at };
+}
+
+/** A cursor carries the position the next page starts from, history's
+ *  `latest` or a thread's `oldest`, and the hash of the query it belongs to,
+ *  so this server keeps no state for it. */
+function encodeCursor(queryHash: string, at: string): string {
+  return Buffer.from(JSON.stringify({ q: queryHash, at })).toString('base64url');
+}
+function cursorPosition(cursor: unknown, queryHash: string): string {
+  let decoded: { q?: unknown; at?: unknown } | undefined;
+  try {
+    decoded = typeof cursor === 'string' && cursor.length <= 256 ? JSON.parse(Buffer.from(cursor, 'base64url').toString()) : undefined;
+  } catch {
+    decoded = undefined;
+  }
+  if (!decoded || typeof decoded.at !== 'string' || !SLACK_TS.test(decoded.at) || typeof decoded.q !== 'string') {
+    throw new Error('cursor is not a nextCursor this server gave: pass it exactly as pagination.nextCursor gave it');
+  }
+  if (decoded.q !== queryHash) {
+    throw new Error(
+      "cursor belongs to another query: pass it with the same channel, thread, oldest, latest and filters as the " +
+        'call that gave it',
+    );
+  }
+  return decoded.at;
+}
+
+/** A message as the read tools return it. */
+export function historyRecord(m: HistoryMessage) {
+  return {
+    id: m.id,
+    ...(m.authorId ? { authorId: m.authorId } : {}),
+    ...(m.authorBotId ? { authorBotId: m.authorBotId } : {}),
+    author: m.authorName,
+    timestamp: m.timestamp.toISOString(),
+    content: m.content,
+    ...(m.threadTs ? { threadTs: m.threadTs } : {}),
+    rootTs: m.rootTs,
+    ...(m.replyCount !== undefined ? { replyCount: m.replyCount } : {}),
+    ...(m.attachments.length > 0
+      ? {
+          attachments: m.attachments.map((a) =>
+            `${a.name}${a.mimeType ? ` (${a.mimeType})` : ''}${a.url ? ` — fetchable via fetch_attachment: ${a.url}` : ''}`,
+          ),
+        }
+      : {}),
+  };
+}
+
+type ReadRecord = ReturnType<typeof historyRecord>;
+export interface HistoryReadResult {
+  messages: ReadRecord[];
+  channel: { id: string; writable: boolean };
+  pagination: {
+    scanned: number; matched: number; returned: number; pages: number; scanComplete: boolean; stopReason: StopReason;
+    threadRepliesSearched: boolean; scope: 'channel_messages' | 'single_thread'; nextCursor?: string; retryAfterSeconds?: number;
+  };
+}
+
+/** Why a page's failure stops a read with what it has: the call's time had
+ *  no room for the page, or Slack rate-limited it for longer than the call
+ *  could wait, with Slack's seconds when it gave them. */
+export type ReadStop = { reason: 'time_limit' } | { reason: 'rate_limited'; retryAfter?: number };
+
+/** What a read needs from the adapter: a page of Slack's answer starting
+ *  after `at` (history's `latest`, a thread's `oldest`, both exclusive), the
+ *  shaping of the messages it returns, whether this bot may write here, and
+ *  which of a page's failures stop the read rather than fail it. */
+export interface ReadSource {
+  page(at: string | undefined, limit: number): Promise<{ messages?: unknown; has_more?: unknown }>;
+  shape(messages: SlackHistoryMessage[]): Promise<HistoryMessage[]>;
+  writable: boolean;
+  stopped(err: unknown): ReadStop | undefined;
+}
+
+/**
+ * Reads pages until the matches, the messages scanned or the result's bytes
+ * reach their limit, or the range is covered. A call either covers its range,
+ * moves past where it started, or fails, saying why: a page the call's time has no room for, a
+ * rate limit longer than the call can wait, a message too big for maxBytes
+ * beside the ones before it, or a page that says more remain but holds
+ * nothing new, stops the read with what it has and a cursor once it has
+ * moved, and fails the call before that.
+ */
+export async function readBounded(opts: ReadOptions, source: ReadSource): Promise<HistoryReadResult> {
+  const { kind } = opts;
+  const filtering = opts.textContains !== undefined || opts.authorIds.length > 0;
+  const fold = (text: string) => (opts.caseSensitive ? text : text.toLowerCase());
+  const needle = opts.textContains === undefined ? undefined : fold(opts.textContains);
+  // History pages back from `latest`, Slack's own now unless given; a thread
+  // pages forward from `oldest`, its start unless given.
+  let at = opts.at ?? (kind === 'history' ? opts.latest : opts.oldest);
+  const records: ReadRecord[] = [];
+  let scanned = 0, matched = 0, pages = 0;
+  let stopReason: StopReason = 'exhausted', complete = false, retryAfterSeconds: number | undefined;
+  let held: { ts: string; bytes: number } | undefined;
+  const result = (nextCursor?: string): HistoryReadResult => ({
+    messages: kind === 'history' ? [...records].reverse() : records,
+    channel: { id: opts.channelId, writable: source.writable },
+    pagination: {
+      scanned, matched, returned: records.length, pages, scanComplete: complete, stopReason,
+      threadRepliesSearched: kind === 'thread', scope: kind === 'history' ? 'channel_messages' : 'single_thread',
+      ...(nextCursor ? { nextCursor } : {}), ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+    },
+  });
+  // The result's bytes without its records, at the longest cursor, stop
+  // reason and counts it can end with, so a record that fits beside the
+  // records before it leaves the finished result within maxBytes. Each record
+  // adds its own bytes and a comma.
+  const skeleton = Buffer.byteLength(JSON.stringify({
+    ...result(encodeCursor(opts.queryHash, '9999999999999999.999999')),
+    messages: [],
+    pagination: {
+      ...result().pagination, scanned: opts.maxScanned, matched: opts.limit, returned: opts.limit, pages: opts.maxScanned,
+      stopReason: 'pagination_stalled', nextCursor: encodeCursor(opts.queryHash, '9999999999999999.999999'), retryAfterSeconds: 99999,
+    },
+  }));
+  let recordBytes = 0;
+  try {
+    pages: while (true) {
+      if (scanned >= opts.maxScanned) { stopReason = 'scan_limit'; break; }
+      if (records.length >= opts.limit) { stopReason = 'match_limit'; break; }
+      // A filtered read scans as far as it may; an unfiltered one asks for
+      // the matches it still needs. Past a thread's start, Slack may give the
+      // parent again within the page's size, so such a page asks for one
+      // more, up to Slack's page size.
+      const wanted = Math.min(opts.maxScanned - scanned, filtering ? PAGE_SIZE : opts.limit - records.length);
+      const size = Math.min(PAGE_SIZE, wanted + (kind === 'thread' && at !== undefined ? 1 : 0));
+      const page = await source.page(at, size);
+      pages++;
+      if (!Array.isArray(page.messages)) {
+        throw new Error("No messages were returned: Slack's answer for a page of messages held no list of them");
+      }
+      // The page's messages in reading order, each strictly past the one
+      // before it, starting from the position: one Slack gives again, such as
+      // a thread's parent, or twice in one page, is taken once and never
+      // moves the position back, whatever order the page came in.
+      const beyond = (ts: string, from: string | undefined) =>
+        from === undefined || (kind === 'history' ? compareTs(ts, from) < 0 : compareTs(ts, from) > 0);
+      const rows: { m: SlackHistoryMessage; ts: string }[] = [];
+      for (const row of (page.messages as SlackHistoryMessage[])
+        .map((m) => ({ m, ts: messageTs(m) }))
+        .sort((a, b) => (kind === 'history' ? compareTs(b.ts, a.ts) : compareTs(a.ts, b.ts)))) {
+        if (beyond(row.ts, rows.at(-1)?.ts ?? at)) rows.push(row);
+      }
+      const isMatch = (m: SlackHistoryMessage) =>
+        (needle === undefined || fold(formatSlackText(m.text ?? '', BY_ID)).includes(needle)) &&
+        (!opts.authorIds.length || [m.user, m.bot_id].some((id) => id !== undefined && opts.authorIds.includes(id)));
+      // Only the matches the limit can still take are shaped, so names are
+      // looked up for them, not for every message scanned. Some may then not
+      // fit maxBytes; their names stay cached for the call that continues.
+      const matches = rows.filter(({ m }) => isMatch(m)).slice(0, opts.limit - records.length).map(({ m }) => m);
+      const shaped = new Map((await source.shape(matches)).map((m, i) => [matches[i]!, m]));
+      for (const [i, { m, ts }] of rows.entries()) {
+        if (scanned >= opts.maxScanned) { stopReason = 'scan_limit'; break pages; }
+        const record = shaped.get(m);
+        if (record) {
+          const returned = historyRecord(record);
+          const bytes = Buffer.byteLength(JSON.stringify(returned));
+          if (skeleton + recordBytes + records.length + bytes > opts.maxBytes) {
+            // Held back whole, and neither scanned nor matched here: the
+            // next read starts at it.
+            stopReason = 'byte_limit';
+            held = { ts, bytes };
+            break pages;
+          }
+          matched++;
+          records.push(returned);
+          recordBytes += bytes;
+        }
+        scanned++;
+        at = ts;
+        if (records.length >= opts.limit && i < rows.length - 1) { stopReason = 'match_limit'; break pages; }
+      }
+      if (page.has_more !== true) { complete = true; break; }
+      if (rows.length === 0) { stopReason = 'pagination_stalled'; break; }
+    }
+  } catch (err) {
+    // A call that hasn't moved fails, as any call does.
+    const stop = scanned === 0 ? undefined : source.stopped(err);
+    if (!stop) throw err;
+    stopReason = stop.reason;
+    if (stop.reason === 'rate_limited') retryAfterSeconds = stop.retryAfter;
+  }
+  if (complete) return result();
+  if (scanned === 0 || at === undefined) throw new Error(stoppedAtStart(opts, stopReason, held, skeleton));
+  return result(encodeCursor(opts.queryHash, at));
+}
+
+/** Why a read that didn't move past its start returns nothing, and how to go
+ *  on: a message too big for maxBytes, or a page that held nothing new. */
+function stoppedAtStart(opts: ReadOptions, stopReason: StopReason, held: { ts: string; bytes: number } | undefined, skeleton: number): string {
+  const n = (value: number) => value.toLocaleString('en-US');
+  if (stopReason === 'byte_limit' && held) {
+    const past = `call again with the same arguments, but without cursor and with ${opts.kind === 'history' ? 'latest' : 'oldest'} ` +
+      `set to ${held.ts}`;
+    const needed = skeleton + held.bytes;
+    const most = READ_LIMITS.maxBytes.maximum;
+    return `No messages were returned: the next message, ${held.ts}, takes ${n(held.bytes)} bytes in this tool's result, ` +
+      `which with up to ${n(skeleton)} bytes of the result's own fields is more than maxBytes, ${n(opts.maxBytes)}. ` +
+      (needed <= most
+        ? `To read it, call again with maxBytes of at least ${n(needed)}; to read past it, ${past}.`
+        : `maxBytes goes up to ${n(most)}, so this tool can't return it whole; to read past it, ${past}.`);
+  }
+  return "No messages were returned: Slack's page held no message past where this read started, though it said more " +
+    "remain. Calling again may get them; if it stops the same way, Slack isn't giving the rest of this range just now.";
+}
