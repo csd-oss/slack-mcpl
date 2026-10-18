@@ -1,0 +1,17 @@
+#+title: orgasmic tx 2026-10
+#+orgasmic_version: 1
+
+* TX 2026-10-18 Sun 11:29:49 manager.tier CONV-P8129
+:PROPERTIES:
+:TX_ID:        tx-20261018-slack-b864095e-9bd2-4c8b-a8d5-cd596716df34
+:TIME:         [2026-10-18 Sun 11:29:49]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
+:PROJECT:      slack-mcpl-history-review
+:TASK:         CONV-P8129
+:REASON:       Report-only independent review; no tracked source changes are authorized for the worker
+:TIER:         trivial
+:TRIGGERS:     none
+:EVENT_ID:     74eb97a1-77e4-43a3-b5ca-28746aee8ccd
+:END:
