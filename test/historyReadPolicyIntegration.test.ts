@@ -61,18 +61,14 @@ test('bounded DM reads preserve the explicit policy precedence over legacy switc
   assert.equal((await allowed.adapter.readThread('D1', '1.0', {})).messages.length, 1);
 });
 
-test('pinned history membership proof consumes the data-page budget and remains fresh on resume', async () => {
+test('pinned history membership proof is outside the page budget and is made fresh on each read', async () => {
   const h = fixture({scopes: ['channels:history'], fallback: true});
   const bounded = await h.adapter.readHistory('C1', {maxPages: 1});
-  assert.equal(bounded.pagination.stopReason, 'page_limit');
-  assert.equal(bounded.pagination.pages, 1);
-  assert.deepEqual(bounded.messages, []);
-  assert.equal(h.calls.filter(call => call.method === 'history').length, 1);
-  assert.equal(h.calls.some(call => call.method === 'info'), false);
-  const second = await h.adapter.readHistory('C1', {maxPages: 2, cursor: bounded.pagination.nextCursor});
-  assert.equal(second.pagination.pages, 2);
-  assert.equal(second.messages.length, 2);
-  assert.equal(second.pagination.scanComplete, true);
+  assert.equal(bounded.pagination.pages, 1, 'the proof is not a page');
+  assert.equal(bounded.messages.length, 2, 'maxPages: 1 returns a page of messages');
+  assert.equal(bounded.pagination.scanComplete, true);
+  assert.deepEqual(h.calls.map(call => `${call.method}:${call.args.limit}`), ['history:1', 'history:200'], 'the proof, then the page; no info');
   h.revoke();
-  await assert.rejects(h.adapter.readHistory('C1', {maxPages: 2, cursor: bounded.pagination.nextCursor}), /not_in_channel/);
+  await assert.rejects(h.adapter.readHistory('C1', {maxPages: 1}), /not_in_channel/);
+  assert.equal(h.calls.length, 3, 'the proof is made again, and nothing is read after it fails');
 });

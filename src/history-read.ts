@@ -117,10 +117,14 @@ export class BoundedHistoryReader {
     if (opts.cursor && (!previous || previous.query !== query)) throw new Error('Invalid, expired or query-mismatched history cursor');
     let position: Position = previous ? {...previous.position} : {oldest: opts.oldest, latest: opts.latest ?? (Date.now() / 1000).toFixed(6)};
     const deadline = this.clock() + opts.maxMs;
-    const request = async (method: ReadMethod, values: Record<string, unknown>) => {
+    // `counts`: whether the request is one of the call's maxPages. Metadata
+    // requests (conversations.info, and a pinned channel's membership proof,
+    // which authorize makes) are not, so maxPages is pages of messages; the
+    // deadline covers every request.
+    const request = async (method: ReadMethod, values: Record<string, unknown>, counts = method !== 'conversations.info') => {
       const remaining = deadline - this.clock();
       if (remaining <= 0) throw new Deadline();
-      if (method !== 'conversations.info') {
+      if (counts) {
         if (pages >= opts.maxPages) throw new PageLimit();
         pages++;
       }
@@ -141,7 +145,7 @@ export class BoundedHistoryReader {
     try {
       // Metadata is optional when the token can read history without info's scope.
       // No cached membership or buffered cursor content can authorize a read.
-      let raw = await this.hooks.authorize?.(channelId, request);
+      let raw = await this.hooks.authorize?.(channelId, (method, values) => request(method, values, false));
       if (!raw) {
         try {
           const info = await request('conversations.info', {channel: channelId});

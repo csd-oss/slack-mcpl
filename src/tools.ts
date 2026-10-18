@@ -7,7 +7,7 @@ import {READ_LIMITS} from './history-read.js';
 
 const readProperties = {
   maxScanned: {type: 'integer', ...READ_LIMITS.maxScanned, description: 'Candidate messages scanned per call, independently of returned matches'},
-  maxPages: {type: 'integer', ...READ_LIMITS.maxPages, description: 'History/replies API pages per call; one metadata request is additional'},
+  maxPages: {type: 'integer', ...READ_LIMITS.maxPages, description: 'History/replies API pages per call; the metadata request, or a pinned channel\'s membership proof, is additional (maxMs covers both)'},
   maxMs: {type: 'integer', ...READ_LIMITS.maxMs, description: 'Deadline in milliseconds for metadata and message requests'},
   maxBytes: {type: 'integer', ...READ_LIMITS.maxBytes, description: 'Maximum UTF-8 bytes of the complete result JSON'},
   oldest: {type: 'string', description: 'Exclusive lower Slack timestamp bound'},

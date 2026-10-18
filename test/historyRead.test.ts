@@ -22,10 +22,29 @@ function fixture(rows: SlackHistoryMessage[] = [], pageSize = 2) {
     return {messages, response_metadata: next < selected.length ? {next_cursor: String(next)} : {}};
   };
   const reader = new BoundedHistoryReader(call, () => false, new Map(), false, () => now);
-  return {reader, calls, setInfo(value: Record<string, unknown>) {info = value;}, setFailure(value: unknown) {failure = value;},
+  return {reader, call, calls, setInfo(value: Record<string, unknown>) {info = value;}, setFailure(value: unknown) {failure = value;},
     setClock(value: number) {now = value;}, afterPage(value: () => void) {afterPage = value;}};
 }
 const rows = Array.from({length: 8}, (_, i) => ({ts: `${i + 1}.0`, user: i % 2 ? 'U2' : 'U1', text: i === 0 || i === 6 ? 'TARGET' : 'noise'}));
+
+test("a pinned channel's membership proof is not one of the call's pages", async () => {
+  const h = fixture(rows);
+  const proofs: string[] = [];
+  const reader = new BoundedHistoryReader(h.call, () => false, new Map(), false, () => 0, {
+    authorize: async (id, request) => {
+      proofs.push(id);
+      await request('conversations.history', {channel: id, limit: 1});
+      return {id, is_member: true, is_im: false, is_mpim: false};
+    },
+  });
+  const out = await reader.read('history', 'C1', {maxPages: 1});
+  assert.deepEqual(proofs, ['C1']);
+  assert.equal(h.calls.filter(c => c.method === 'conversations.history').length, 2, 'the proof, then one page');
+  assert.equal(h.calls.filter(c => c.method === 'conversations.info').length, 0);
+  assert.equal(out.pagination.pages, 1);
+  assert.equal(out.pagination.stopReason, 'page_limit');
+  assert.equal(out.messages.length, 2, 'maxPages=1 still returns a page of messages');
+});
 
 test('one returned match can scan a full candidate page without 200 one-message requests', async () => {
   const many = Array.from({length: 200}, (_, i) => ({ts: `${i + 1}.0`, text: i === 0 ? 'target' : 'noise'}));
