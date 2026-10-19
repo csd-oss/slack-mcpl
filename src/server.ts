@@ -1491,8 +1491,8 @@ export class SlackMcplServer {
       return { delivered: false, messageId: undefined };
     }
 
-    // Reply in the thread of the most recent incoming message on this
-    // conversation; top-level when it wasn't threaded. With recipient
+    // Reply in the thread of the last incoming message the host took from
+    // this conversation; top-level when it wasn't threaded. With recipient
     // routing, only in the thread the host names, once Slack confirms it is a
     // thread's parent.
     const frozenTarget = (params as ChannelsPublishParams & { threadId?: string }).threadId;

@@ -804,7 +804,8 @@ export class SlackAdapter {
   private accessPolicy?: SlackAccessPolicy;
   /** Lets file helpers select strict association checks without exposing policy. */
   get hasExplicitAccessPolicy(): boolean { return this.accessPolicy !== undefined; }
-  /** The event being handled in each conversation, which the next waits for. */
+  /** Each conversation's last event's turn, which the next event's delivery
+   *  waits for. */
   private inbound = new Map<string, Promise<void>>();
   private userNameCache = new Map<string, string>();
   private messageHandlers: Array<(msg: SlackMessageData) => void> = [];
@@ -849,17 +850,31 @@ export class SlackAdapter {
     const omitted = this.leftOutTypes();
     if (omitted.length) this.logLeftOut(omitted, '');
     // Register the handler at construction so start() ordering can't race
-    // an early event past an unregistered listener. Events are handled one
-    // at a time per conversation, in arrival order: the lookups before a
-    // message is delivered (its conversation's fresh admission, its author's
-    // and mentions' names) take different times, and a later message must not
-    // reach the host, or become the reply target, before an earlier one.
+    // an early event past an unregistered listener. Each event is prepared as
+    // it arrives, its conversation's fresh admission checked and its author's
+    // and mentions' names looked up, and delivered after the event before it
+    // in its conversation: the lookups take different times, and a later message must not reach the host before an
+    // earlier one. Preparing at arrival keeps one conversation's lookups side
+    // by side, so a run of slow or failing ones costs the slowest, not their
+    // sum, within the Web API client's 100 requests at once, which every
+    // conversation's lookups share. From delivery on, the server keeps the
+    // same order with its own chain per conversation (setupSlackForwarding).
     this.socket.on('message', ({ event, ack }) => {
       // Always ack first — Slack redelivers unacked envelopes.
       void Promise.resolve().then(() => ack()).catch(() => { /* ignore */ });
+      // Settled into a value at once, so a preparation that fails before its
+      // turn is never a rejection nothing handles.
+      const prepared = this.prepareMessageEvent(event).then(
+        (msg) => ({ ok: true as const, msg }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
       const key = typeof event?.channel === 'string' ? event.channel : '';
       const turn = (this.inbound.get(key) ?? Promise.resolve())
-        .then(() => this.handleMessageEvent(event))
+        .then(() => prepared)
+        .then((done) => {
+          if (!done.ok) throw done.error;
+          if (done.msg) for (const handler of this.messageHandlers) handler(done.msg);
+        })
         .catch((error) => console.error('[slack-mcpl] Failed to handle Slack message event:', error));
       this.inbound.set(key, turn);
       void turn.then(() => { if (this.inbound.get(key) === turn) this.inbound.delete(key); });
@@ -1790,7 +1805,9 @@ export class SlackAdapter {
 
   // ── Incoming events ──
 
-  private async handleMessageEvent(event: SlackMessageEvent): Promise<void> {
+  /** An event's checks and its author's and mentions' names, and the message
+   *  they make, or undefined for an event that isn't delivered. */
+  private async prepareMessageEvent(event: SlackMessageEvent): Promise<SlackMessageData | undefined> {
     if (!event || event.type !== 'message') return;
     // With recipient routing, other bots' messages come through as context.
     if (!CONTENT_SUBTYPES.has(event.subtype) && !(this.routing && event.subtype === 'bot_message')) return;
@@ -1868,8 +1885,7 @@ export class SlackAdapter {
       timestamp: new Date(parseFloat(event.ts) * 1000),
       attachments,
     };
-
-    for (const handler of this.messageHandlers) handler(msg);
+    return msg;
   }
 
   /** Resolve user IDs into this adapter's cache (shared logic in content.ts).
