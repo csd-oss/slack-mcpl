@@ -61,6 +61,15 @@ test('listing never exposes unjoined channels or denied DMs even with includeNon
   assert.equal(h.calls.find((c) => c.method === 'list')?.args.types, 'public_channel,private_channel');
 });
 
+test('listing checks afresh only the channels the list says the bot is in', async () => {
+  const h = fixture();
+  const others = Array.from({ length: 200 }, (_, i) => channel(`CPUB${i}`, false));
+  h.setListed([...others, channel('CWRITE'), channel('CREAD')]);
+  const result = await h.adapter.listConversations();
+  assert.deepEqual(result.conversations.map((c) => c.id), ['CWRITE', 'CREAD']);
+  assert.deepEqual(h.calls.filter((c) => c.method === 'info').map((c) => c.args.channel), ['CWRITE', 'CREAD']);
+});
+
 test('listing revalidates membership and describes fresh info rather than stale list metadata', async () => {
   const h = fixture();
   h.setListed([channel('CREAD'), channel('COUT', true)]);
