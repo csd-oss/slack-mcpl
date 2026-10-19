@@ -15,6 +15,12 @@ function makeAdapter(sendChannels?: string[]) {
   const calls: string[] = [];
   const socket = { on() {}, async start() {}, async disconnect() {} } as any;
   const web = {
+    conversations: {
+      info: async ({ channel }: { channel: string }) => ({ channel: {
+        id: channel, is_im: channel.startsWith('D'), is_mpim: false,
+        is_private: channel.startsWith('G'), is_member: true, user: 'U1',
+      } }),
+    },
     chat: { postMessage: async () => ({ ts: '9.0' }) },
     reactions: { add: async () => {}, remove: async () => {} },
     assistant: {
@@ -25,7 +31,14 @@ function makeAdapter(sendChannels?: string[]) {
       },
     },
   } as any;
-  return { adapter: new SlackAdapter(web, socket, 'UBOT', 'acme', undefined, sendChannels), calls };
+  return { adapter: new SlackAdapter(web, socket, 'UBOT', 'acme', undefined, sendChannels,
+    undefined, undefined, ['channels:read', 'groups:read', 'im:read', 'mpim:read', 'chat:write']), calls, web };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
 }
 
 test('set once, not again on the host refresh, cleared on stop', async () => {
@@ -51,12 +64,145 @@ test('nothing outside the write allow-list', async () => {
   assert.deepEqual(calls, []);
 });
 
-test('a post in the thread ends the status, so the next refresh sets it again', async () => {
+test('a post makes the next refresh set the status again, then stop clears it', async () => {
   const { adapter, calls } = makeAdapter();
   await adapter.setThreadStatus('C1', '1.0');
   await adapter.sendMessage('C1', 'partial answer', { threadTs: '1.0' });
   await adapter.setThreadStatus('C1', '1.0');
-  assert.deepEqual(calls, ['C1:1.0:is thinking…', 'C1:1.0:is thinking…']);
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…', 'C1:1.0:is thinking…', 'C1:1.0:']);
+});
+
+for (const channel of ['C1', 'G1', 'D1']) {
+  test(`a post in ${channel} retains ownership for stop without another refresh`, async () => {
+    const { adapter, calls } = makeAdapter();
+    adapter.configureAccessPolicy({ writeChannels: ['C1', 'G1'], dmUsers: ['U1'], readJoinedChannels: true });
+    await adapter.setRecipientThreadStatus(channel, '1.0', false);
+    await adapter.sendMessage(channel, 'answer', { threadTs: '1.0' });
+    await adapter.setRecipientThreadStatus(channel, '1.0', true);
+    await adapter.setRecipientThreadStatus(channel, '1.0', true);
+    assert.deepEqual(calls, [`${channel}:1.0:is thinking…`, `${channel}:1.0:`]);
+  });
+}
+
+test('a delayed stop after a post cannot clear a newer root', async () => {
+  const { adapter, calls } = makeAdapter();
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await adapter.sendMessage('C1', 'answer', { threadTs: '1.0' });
+  await adapter.setRecipientThreadStatus('C1', '2.0', false);
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…', 'C1:1.0:', 'C1:2.0:is thinking…']);
+  await adapter.setRecipientThreadStatus('C1', '2.0', true);
+  assert.equal(calls.at(-1), 'C1:2.0:');
+});
+
+test('posts to another channel, root or top level leave the current refresh throttled', async () => {
+  const { adapter, calls } = makeAdapter();
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await adapter.sendMessage('C2', 'answer', { threadTs: '1.0' });
+  await adapter.sendMessage('C1', 'answer', { threadTs: '2.0' });
+  await adapter.sendMessage('C1', 'answer');
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await adapter.setRecipientThreadStatus('C1', '2.0', true);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…']);
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  assert.equal(calls.at(-1), 'C1:1.0:');
+});
+
+test('a failed post retains ownership and the existing refresh throttle', async () => {
+  const { adapter, calls, web } = makeAdapter();
+  web.chat.postMessage = async () => { throw new Error('synthetic post failure'); };
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await assert.rejects(adapter.sendMessage('C1', 'answer', { threadTs: '1.0' }), /synthetic post failure/);
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…', 'C1:1.0:']);
+});
+
+test('status failures stay best effort and do not prevent later turns', async t => {
+  const { adapter, calls, web } = makeAdapter();
+  const errors = t.mock.method(console, 'error', () => {});
+  const setStatus = web.assistant.threads.setStatus;
+  web.assistant.threads.setStatus = async () => { throw new Error('synthetic status failure'); };
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  assert.deepEqual(calls, []);
+  web.assistant.threads.setStatus = setStatus;
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await adapter.sendMessage('C1', 'answer', { threadTs: '1.0' });
+  web.assistant.threads.setStatus = async () => { throw new Error('synthetic clear failure'); };
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  assert.equal(errors.mock.callCount(), 2, 'the post retained ownership, so stop attempted the failed clear');
+  web.assistant.threads.setStatus = setStatus;
+  await adapter.setRecipientThreadStatus('C1', '2.0', false);
+  await adapter.setRecipientThreadStatus('C1', '2.0', true);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…', 'C1:2.0:is thinking…', 'C1:2.0:']);
+});
+
+test('a stop while a post is pending clears once and the post cannot restore ownership', async () => {
+  const { adapter, calls, web } = makeAdapter();
+  const entered = deferred(), finish = deferred();
+  web.chat.postMessage = async () => { entered.resolve(); await finish.promise; return { ts: '9.0' }; };
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  const post = adapter.sendMessage('C1', 'answer', { threadTs: '1.0' });
+  await entered.promise;
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  finish.resolve(); await post;
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…', 'C1:1.0:']);
+});
+
+test('completion of an older post cannot expire a newer root', async () => {
+  const { adapter, calls, web } = makeAdapter();
+  const entered = deferred(), finish = deferred();
+  web.chat.postMessage = async () => { entered.resolve(); await finish.promise; return { ts: '9.0' }; };
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  const post = adapter.sendMessage('C1', 'answer', { threadTs: '1.0' });
+  await entered.promise;
+  await adapter.setRecipientThreadStatus('C1', '2.0', false);
+  finish.resolve(); await post;
+  await adapter.setRecipientThreadStatus('C1', '2.0', false);
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…', 'C1:1.0:', 'C1:2.0:is thinking…']);
+  await adapter.setRecipientThreadStatus('C1', '2.0', true);
+  assert.equal(calls.at(-1), 'C1:2.0:');
+});
+
+test('a post during a pending status request retains ownership until the queued stop', async () => {
+  const { adapter, calls, web } = makeAdapter();
+  const entered = deferred(), finish = deferred();
+  const setStatus = web.assistant.threads.setStatus;
+  web.assistant.threads.setStatus = async (args: any) => {
+    await setStatus(args);
+    if (args.status) { entered.resolve(); await finish.promise; }
+  };
+  const start = adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await entered.promise;
+  await adapter.sendMessage('C1', 'answer', { threadTs: '1.0' });
+  const stop = adapter.setRecipientThreadStatus('C1', '1.0', true);
+  finish.resolve(); await Promise.all([start, stop]);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…', 'C1:1.0:']);
+});
+
+test('refresh and stop queued after a post stay ordered', async () => {
+  const { adapter, calls } = makeAdapter();
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await adapter.sendMessage('C1', 'answer', { threadTs: '1.0' });
+  await Promise.all([
+    adapter.setRecipientThreadStatus('C1', '1.0', false),
+    adapter.setRecipientThreadStatus('C1', '1.0', true),
+  ]);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…', 'C1:1.0:is thinking…', 'C1:1.0:']);
+});
+
+test('a stale connection stop after a post leaves ownership for the current connection', async () => {
+  const { adapter, calls } = makeAdapter();
+  await adapter.setRecipientThreadStatus('C1', '1.0', false);
+  await adapter.sendMessage('C1', 'answer', { threadTs: '1.0' });
+  await adapter.setRecipientThreadStatus('C1', '1.0', true, () => false);
+  assert.deepEqual(calls, ['C1:1.0:is thinking…']);
+  await adapter.setRecipientThreadStatus('C1', '1.0', true);
+  assert.equal(calls.at(-1), 'C1:1.0:');
 });
 
 async function ready(h: Pick<Harness, 'host' | 'hostSaw'>, grant = FULL_GRANT) {

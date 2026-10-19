@@ -138,6 +138,26 @@ advanced('frozen typing requires a root; delayed stop cannot clear a different t
     content: [{type: 'text', text: 'revoked'}]}));
 });
 
+for (const channel of ['CWRITE', 'DPEER']) {
+  advanced(`recipient typing stop clears ${channel} after publish without another refresh`, async t => {
+    const h = fixture(t); await ready(h);
+    const typing = (op: string) => h.host.sendNotification(method.CHANNELS_TYPING, {
+      channelId: `slack:${channel}`, op, metadata: {supportRecipientReplyRoot: '100.1'},
+    });
+    typing('start'); await until(() => h.statuses.length === 1, 'status before publish');
+    const published = await h.host.sendRequest(method.CHANNELS_PUBLISH, {
+      channelId: `slack:${channel}`, threadId: '100.1', content: [{type: 'text', text: 'answer'}],
+    }) as any;
+    assert.equal(published.delivered, true);
+    assert.equal(h.posts.length, 1);
+    typing('stop'); await until(() => h.statuses.length === 2, 'status cleared after publish');
+    assert.deepEqual(h.statuses, [
+      {channel_id: channel, thread_ts: '100.1', status: 'is thinking…'},
+      {channel_id: channel, thread_ts: '100.1', status: ''},
+    ]);
+  });
+}
+
 advanced('disabled tools are hidden and direct invocation is denied; settings snapshot is stable', async t => {
   const h = fixture(t); await ready(h);
   const listed = await h.host.sendRequest('tools/list', {}) as any;
