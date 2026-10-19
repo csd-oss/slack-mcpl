@@ -208,14 +208,28 @@ export function waitToAskAgain(err: unknown, method: string): SlackWait | undefi
   return undefined;
 }
 
+/** The seconds Slack asked a rate-limited request to wait: a 429's
+ *  Retry-After, or one that came with a ratelimited refusal in an HTTP 200,
+ *  which the client puts in its response_metadata. They're kept only as a
+ *  safe integer, at most 16 digits of JSON, which bounds a read result's own
+ *  bytes (history-read.ts), and not below 0. */
+export function retryAfterSeconds(err: unknown): number | undefined {
+  const e = err as { code?: unknown; retryAfter?: unknown; data?: { response_metadata?: { retryAfter?: unknown } } } | null;
+  const seconds = e?.code === ErrorCode.RateLimitedError ? e.retryAfter : e?.data?.response_metadata?.retryAfter;
+  return Number.isSafeInteger(seconds) && (seconds as number) >= 0 ? (seconds as number) : undefined;
+}
+
 /** Why a read tool's page failing stops the read with what it has, rather
  *  than failing it: the call's time had no room for the page, or Slack
- *  rate-limited it for longer than the call could wait. */
+ *  rate-limited it, with an HTTP 429 longer than the call could wait or with
+ *  a ratelimited refusal in an HTTP 200, which the client never waits out,
+ *  with Slack's seconds when they came (retryAfterSeconds). */
 function readStop(err: unknown): ReadStop | undefined {
   if (err instanceof OutOfCallTime) return { reason: 'time_limit' };
-  const e = err as { code?: unknown; retryAfter?: unknown } | null;
-  if (e?.code !== ErrorCode.RateLimitedError) return undefined;
-  return { reason: 'rate_limited', ...(typeof e.retryAfter === 'number' && e.retryAfter >= 0 ? { retryAfter: e.retryAfter } : {}) };
+  const e = err as { code?: unknown } | null;
+  if (e?.code !== ErrorCode.RateLimitedError && slackRefusal(err) !== 'ratelimited') return undefined;
+  const seconds = retryAfterSeconds(err);
+  return { reason: 'rate_limited', ...(seconds === undefined ? {} : { retryAfter: seconds }) };
 }
 
 /** Called by a listing no call waits on before it asks Slack again: with the
@@ -1629,10 +1643,14 @@ export class SlackAdapter {
     return readBounded(opts, {
       page: (at, limit) => this.web.conversations.history({
         channel: channelId, limit, inclusive: false,
-        // Given oldest without latest, Slack pages forward from oldest, but
-        // this read pages back: it would stop after one page and call the
-        // range covered. So oldest always comes with a latest, now's here.
-        // ponytail: a box clock over a minute behind Slack's misses the newest messages.
+        // Slack's reference says latest defaults to now, with the most recent
+        // messages first, but #32 reports a live run in which oldest alone got
+        // the messages just after oldest. This read pages back, so it stopped
+        // after that page and called the range covered. So oldest always comes
+        // with a latest: the host's now plus a minute, which still reaches the
+        // newest messages from a host clock up to a minute behind Slack's. A
+        // clock further behind misses them, and the read still reports itself
+        // complete.
         ...(at ? { latest: at } : opts.oldest ? { latest: (Date.now() / 1000 + 60).toFixed(6) } : {}),
         ...(opts.oldest ? { oldest: opts.oldest } : {}),
       }),
