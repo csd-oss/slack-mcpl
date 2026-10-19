@@ -46,6 +46,8 @@ import {
   fileLeftByUpload,
   leftOutNote,
   outsideCallTime,
+  postLeftBy,
+  refusedForGood,
   slackRefusal,
   withCallTime,
   type SlackAdapter,
@@ -93,6 +95,9 @@ const REGISTRATION_TRIES = 10;
 /** The most bytes upload_file takes inline: the file's bytes, after base64 is
  *  decoded or text is encoded as UTF-8. */
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+/** The length of the cap's canonical base64: four characters for every three
+ *  bytes, padded, so canonical base64 any longer holds more than the cap. */
+const MAX_UPLOAD_BASE64 = Math.ceil(MAX_UPLOAD_BYTES / 3) * 4;
 /** files.delete's answers for a file that's already gone, or that this bot
  *  can't see any more: Slack's own words are "already been deleted" and "does
  *  not exist, or is not visible to the calling user". */
@@ -693,12 +698,15 @@ export class SlackMcplServer {
         return { content: (result as { _content: ContentBlock[] })._content };
       }
 
-      // Track checkpoints for rollback-enabled tools
+      // Track checkpoints for rollback-enabled tools. The result names the new
+      // checkpoint and its parent, the checkpoint before it (MCPL §8.2), so a
+      // rollback to the parent deletes what this call posted or uploaded, a
+      // process's first call included.
       if (fs === MESSAGING_FEATURE_SET) {
-        const cpId = this.stateTracker.createCheckpoint();
+        this.stateTracker.createCheckpoint();
         return {
           content: [textContent(typeof result === 'string' ? result : JSON.stringify(result))],
-          state: { checkpoint: cpId },
+          state: this.stateTracker.getCheckpointState(),
         };
       }
 
@@ -713,6 +721,21 @@ export class SlackMcplServer {
     }
   }
 
+  /** Runs a post. One that fails in a way that may have posted it, or whose
+   *  answer named no message, is recorded without an id (postLeftBy), so a
+   *  rollback says it may remain. A post Slack names is recorded by its
+   *  caller, under the conversation the call gave, or for send_dm the DM it
+   *  opened. */
+  private async posting<T>(content: string, send: () => Promise<T>): Promise<T> {
+    try {
+      return await send();
+    } catch (err) {
+      const left = postLeftBy(err);
+      if (left) this.stateTracker.recordUnnamed(left.channelId, content, left.threadTs);
+      throw err;
+    }
+  }
+
   private async executeToolCall(
     name: string,
     args: Record<string, unknown>,
@@ -721,7 +744,7 @@ export class SlackMcplServer {
       case 'send_message': {
         const channelId = this.requireString(args, 'channelId');
         const content = this.requireString(args, 'content');
-        const result = await this.slack.sendMessage(channelId, content);
+        const result = await this.posting(content, () => this.slack.sendMessage(channelId, content));
         this.stateTracker.recordSent(result.messageId, channelId, content);
         this.markOutbound(channelId);
         return { messageId: result.messageId };
@@ -731,7 +754,7 @@ export class SlackMcplServer {
         const channelId = this.requireString(args, 'channelId');
         const content = this.requireString(args, 'content');
         const threadTs = this.requireString(args, 'messageId');
-        const result = await this.slack.sendMessage(channelId, content, { threadTs });
+        const result = await this.posting(content, () => this.slack.sendMessage(channelId, content, { threadTs }));
         this.stateTracker.recordSent(result.messageId, channelId, content);
         this.markOutbound(channelId);
         return { messageId: result.messageId, threadTs };
@@ -745,9 +768,11 @@ export class SlackMcplServer {
         // than dropped: a messageId given as a number, say, and dropped would
         // put the file in the conversation, not its thread.
         const given = (k: string) => args[k] !== undefined && args[k] !== null;
+        // Each of upload_file's own refusals opens as its other failures do.
+        const refuse = (text: string) => new Error(`Nothing was uploaded: ${text}`);
         const optional = (k: string): string | undefined => {
           if (!given(k) || args[k] === '') return undefined;
-          if (typeof args[k] !== 'string') throw new Error(`${k} must be a string`);
+          if (typeof args[k] !== 'string') throw refuse(`${k} must be a string`);
           return args[k] as string;
         };
         // UTF-8 can't hold a lone surrogate: Buffer.from would write U+FFFD in
@@ -755,12 +780,12 @@ export class SlackMcplServer {
         // and the client can't encode one into its request to Slack.
         const loneSurrogate = (k: string, v: string | undefined, remedy: string) => {
           if (v !== undefined && LONE_SURROGATE.test(v)) {
-            throw new Error(`${k} holds a lone UTF-16 surrogate, which UTF-8 can't encode: ${remedy}`);
+            throw refuse(`${k} holds a lone UTF-16 surrogate, which UTF-8 can't encode: ${remedy}`);
           }
         };
         if (given('path') && !this.pathReader) {
-          throw new Error(
-            "Nothing was uploaded: this host doesn't take file paths, so upload_file can't read path. Pass the " +
+          throw refuse(
+            "this host doesn't take file paths, so upload_file can't read path. Pass the " +
               "file's bytes as content or contentBase64 instead.",
           );
         }
@@ -777,10 +802,10 @@ export class SlackMcplServer {
         let rest: ReturnType<typeof extras>;
         if (given('path')) {
           if (['path', 'content', 'contentBase64'].filter(given).length !== 1) {
-            throw new Error('pass exactly one of path, content or contentBase64');
+            throw refuse('pass exactly one of path, content or contentBase64');
           }
           const path = args.path;
-          if (typeof path !== 'string') throw new Error('path must be a string');
+          if (typeof path !== 'string') throw refuse('path must be a string');
           filename = given('filename') ? this.requireString(args, 'filename') : basename(path);
           loneSurrogate('filename', filename, 'remove it from the name');
           rest = extras();
@@ -789,33 +814,45 @@ export class SlackMcplServer {
           // same way inline bytes do.
           await this.slack.requireUploadDestination(channelId);
           data = await this.pathReader!.read(path);
-          if (data.byteLength === 0) throw new Error('path names an empty file: give a file with at least one byte');
+          if (data.byteLength === 0) throw refuse('path names an empty file: give a file with at least one byte');
         } else {
           filename = this.requireString(args, 'filename');
-          if (given('content') === given('contentBase64')) throw new Error('pass exactly one of content or contentBase64');
+          if (given('content') === given('contentBase64')) throw refuse('pass exactly one of content or contentBase64');
           const key = given('content') ? 'content' : 'contentBase64';
           const input = args[key];
-          if (typeof input !== 'string') throw new Error(`${key} must be a string`);
-          if (input.length === 0) throw new Error(`${key} is empty: give the file's content, at least one byte`);
+          if (typeof input !== 'string') throw refuse(`${key} must be a string`);
+          if (input.length === 0) throw refuse(`${key} is empty: give the file's content, at least one byte`);
           loneSurrogate('filename', filename, 'remove it from the name');
+          const tooLarge = (size: string) => refuse(
+            `inline file too large: ${size}, past this server's inline limit of ${MAX_UPLOAD_BYTES} bytes, so upload_file ` +
+              'can\'t send it. A smaller file can go, such as this one split into parts.',
+          );
           if (key === 'content') {
             loneSurrogate('content', input, 'remove it, or pass the file\'s bytes as contentBase64');
+            // Measured before the bytes are made, so content past the cap isn't
+            // copied (R1-1).
+            const length = Buffer.byteLength(input, 'utf8');
+            if (length > MAX_UPLOAD_BYTES) throw tooLarge(`${length} bytes`);
             data = Buffer.from(input, 'utf8');
           } else {
+            // Longer than the cap's canonical base64, it's refused before it's
+            // decoded and encoded again (R1-1).
+            if (input.length > MAX_UPLOAD_BASE64) {
+              throw refuse(
+                `inline file too large: contentBase64 is ${input.length} characters, and canonical base64 longer than ` +
+                  `${MAX_UPLOAD_BASE64} characters holds more than this server's inline limit of ${MAX_UPLOAD_BYTES} bytes, ` +
+                  'so upload_file can\'t send it. A smaller file can go, such as this one split into parts.',
+              );
+            }
             // Buffer.from skips what isn't base64 and reads a data URI's prefix
             // as bytes, so only base64 that it writes back the same is taken:
             // canonical RFC 4648, with padding and zero unused bits.
             data = Buffer.from(input, 'base64');
             if (data.toString('base64') !== input) {
-              throw new Error('contentBase64 must be canonical RFC 4648 base64 with padding, on one line: no line breaks, spaces or data URI');
+              throw refuse('contentBase64 must be canonical RFC 4648 base64 with padding, on one line: no line breaks, spaces or data URI');
             }
           }
-          if (data.byteLength > MAX_UPLOAD_BYTES) {
-            throw new Error(
-              `inline file too large: ${data.byteLength} bytes, past this server's inline limit of ${MAX_UPLOAD_BYTES} ` +
-                'bytes, so upload_file can\'t send it. A smaller file can go, such as this one split into parts.',
-            );
-          }
+          if (data.byteLength > MAX_UPLOAD_BYTES) throw tooLarge(`${data.byteLength} bytes`);
           rest = extras();
         }
         const { comment, title, threadTs } = rest;
@@ -838,7 +875,7 @@ export class SlackMcplServer {
       case 'send_dm': {
         const userId = this.requireString(args, 'userId');
         const content = this.requireString(args, 'content');
-        const result = await this.slack.sendDM(userId, content);
+        const result = await this.posting(content, () => this.slack.sendDM(userId, content));
         this.stateTracker.recordSent(result.messageId, result.channelId, content);
         this.markOutbound(result.channelId);
         return { messageId: result.messageId, channelId: result.channelId };
@@ -1264,9 +1301,9 @@ export class SlackMcplServer {
     return added;
   }
 
-  /** Re-enumerate every conversation currently visible and register any the
-   *  host doesn't yet know about — the agent-facing catch-all for "I was
-   *  invited to a channel but don't see it". */
+  /** Re-enumerate every conversation currently visible, of the kinds the
+   *  token can read, and register any the host doesn't yet know about — the
+   *  agent-facing catch-all for "I was invited to a channel but don't see it". */
   private async refreshChannels(): Promise<{
     visible: number;
     added: Array<{ id: string; label: string }>;
@@ -1441,11 +1478,11 @@ export class SlackMcplServer {
     const threadTs = this.slack.routing ? frozenTarget : this.lastIncomingThreadTs.get(parsed.conversationId);
     if (this.slack.routing && !(await this.isThreadRoot(parsed.conversationId, threadTs!))) return { delivered: false };
     Object.assign(published, { channelId: parsed.conversationId, threadTs });
-    const result = await this.slack.sendMessage(
+    const result = await this.posting(text, () => this.slack.sendMessage(
       parsed.conversationId,
       text,
       threadTs ? { threadTs } : {},
-    );
+    ));
     this.stateTracker.recordSent(result.messageId, parsed.conversationId, text);
     this.markOutbound(parsed.conversationId);
     dbg('handlePublish:sent', { channelId: params.channelId, messageId: result.messageId, threadTs });
@@ -1497,10 +1534,17 @@ export class SlackMcplServer {
     // Best-effort delete of sent messages and uploaded files, each counted in
     // its own kind: an upload is its file, then the message that shared it,
     // when Slack's answer named one, and neither delete skips the other. An
-    // answer that says the item is already gone counts it as deleted.
+    // answer that says the item is already gone counts it as deleted. A post
+    // this server can't name counts as a message no delete can reach.
     const sent = { message: 0, file: 0 };
     const deleted = { message: 0, file: 0 };
-    const attempt = async (kind: 'message' | 'file', what: string, channelId: string, gone: string[], remove: () => Promise<void>) => {
+    /** Each item a delete didn't confirm gone, or that no delete could name,
+     *  by kind, id (where known) and conversation, and whether Slack refused
+     *  its delete for good. */
+    const left: Array<{ kind: 'message' | 'file'; named: string; forGood: boolean; unnamed?: boolean }> = [];
+    const attempt = async (
+      kind: 'message' | 'file', id: string, channelId: string, gone: string[], remove: () => Promise<void>, sharedFile?: string,
+    ) => {
       sent[kind]++;
       try {
         await remove();
@@ -1511,31 +1555,49 @@ export class SlackMcplServer {
           deleted[kind]++;
           return;
         }
-        // Best-effort otherwise: the delete was refused, rate-limited, out of
-        // this call's time, or failed on the way. The tracker has dropped it
-        // with the branch, so no later rollback tries it again, and an
-        // operator finds it here.
-        console.error(`[slack-mcpl] Rollback couldn't delete ${what} in ${channelId}: ${(err as Error)?.message ?? String(err)}`);
+        // Best-effort otherwise: Slack refused the delete for good; or it was
+        // rate-limited, out of this call's time, or failed in a way that
+        // leaves it unknown, on the way or by Slack's own failure, and the
+        // item may remain. Either way the tracker has dropped it with the
+        // branch, so no later rollback tries it again: the reason names it,
+        // for the agent, and stderr says why, for an operator.
+        const shared = sharedFile ? `, which shared file ${sharedFile}` : '';
+        left.push({ kind, named: `${kind} ${id} in ${channelId}${shared}`, forGood: refusedForGood(err) });
+        console.error(
+          `[slack-mcpl] Rollback couldn't delete ${kind} ${id}${shared && `${shared},`} in ${channelId}: ` +
+            `${(err as Error)?.message ?? String(err)}`,
+        );
       }
     };
     for (const item of toDelete) {
       if (item.kind === 'file') {
-        await attempt('file', `file ${item.fileId}`, item.channelId, FILE_GONE,
-          () => this.slack.deleteFile(item.channelId, item.fileId));
+        await attempt('file', item.fileId, item.channelId, FILE_GONE, () => this.slack.deleteFile(item.channelId, item.fileId));
         const { shareTs } = item;
         if (shareTs) {
-          await attempt('message', `message ${shareTs}, which shared file ${item.fileId},`, item.channelId, ['message_not_found'],
-            () => this.slack.deleteMessage(item.channelId, shareTs));
+          await attempt('message', shareTs, item.channelId, ['message_not_found'],
+            () => this.slack.deleteMessage(item.channelId, shareTs), item.fileId);
         }
+      } else if (item.messageId === undefined) {
+        // A post this server can't name (state.ts): the reason says where it
+        // may be, for the agent, and stderr says so, for an operator.
+        sent.message++;
+        const where = `${item.threadTs ? ` in the thread under message ${item.threadTs}` : ''} in ${item.channelId}`;
+        left.push({ kind: 'message', named: `a message${where} whose id this server doesn't know`, forGood: false, unnamed: true });
+        console.error(
+          `[slack-mcpl] Rollback couldn't delete a message${where}: Slack's answer to the post named none, or the post's ` +
+            'outcome is unknown',
+        );
       } else {
-        await attempt('message', `message ${item.messageId}`, item.channelId, ['message_not_found'],
-          () => this.slack.deleteMessage(item.channelId, item.messageId));
+        const { messageId } = item;
+        await attempt('message', messageId, item.channelId, ['message_not_found'],
+          () => this.slack.deleteMessage(item.channelId, messageId));
       }
     }
 
-    // What was deleted of each kind, when something wasn't; and an upload's
-    // comment that may be left, when Slack may have shared the file with it
-    // and this server doesn't know the message that did.
+    // What was deleted of each kind, and each item left, when something
+    // wasn't; and an upload's comment that may be left, when Slack may have
+    // shared the file with it and this server doesn't know the message that
+    // did. A known sharing message that's left is named with the rest.
     const counts = (['message', 'file'] as const)
       .filter((kind) => sent[kind] > 0)
       .map((kind) => `${deleted[kind]}/${sent[kind]} ${kind}s`)
@@ -1545,8 +1607,35 @@ export class SlackMcplServer {
     // "may".
     const commentsLeft = toDelete.filter((item): item is UploadedFile => item.kind === 'file' && item.comment && !item.shareTs);
     const ids = "which fetch_history shows, or fetch_thread if the file went into a thread";
+    // What the agent can do about an item left, since no rollback tries it
+    // again: one whose delete can pass can be deleted by its id, and one
+    // Slack refused for good can't be, however often it's asked. A post this
+    // server can't name can be deleted by its id, which fetch_history shows,
+    // or fetch_thread for a reply.
+    const mayRemain = left.filter((item) => !item.forGood);
+    const refused = left.filter((item) => item.forGood);
+    const named = (items: typeof left) => items.map((item) => item.named).join('; ');
+    const namedMessageLeft = mayRemain.some((item) => item.kind === 'message' && !item.unnamed);
+    const unnamedLeft = mayRemain.some((item) => item.unnamed);
+    const remedy = [
+      ...(namedMessageLeft ? ['delete_message can try a message among them again, by its id'] : []),
+      ...(unnamedLeft
+        ? [namedMessageLeft
+          ? "fetch_history shows the id of one this server doesn't know (fetch_thread, for one in a thread)"
+          : 'delete_message can delete one by its id, which fetch_history shows (fetch_thread, for one in a thread)']
+        : []),
+      ...(mayRemain.some((item) => item.kind === 'file')
+        ? ["no tool here deletes a file, and whoever runs this host can delete it with Slack's files.delete, by its id"]
+        : []),
+    ].join(', and ');
     const notes = [
-      ...(deleted.message + deleted.file < sent.message + sent.file ? [`Rolled back (${counts} deleted)`] : []),
+      ...(left.length > 0
+        ? [[
+            `Rolled back (${counts} deleted)`,
+            ...(mayRemain.length > 0 ? [`May remain: ${named(mayRemain)}. No rollback tries these again: ${remedy}`] : []),
+            ...(refused.length > 0 ? [`Slack refused to delete these, and calling again won't change that: ${named(refused)}`] : []),
+          ].join('. ')]
+        : []),
       ...(commentsLeft.length === 1
         ? [`The comment of uploaded file ${commentsLeft[0].fileId} may remain in conversation ${commentsLeft[0].channelId}: ` +
           "this server doesn't know the message that shared the file, so no rollback can delete it. delete_message " +
