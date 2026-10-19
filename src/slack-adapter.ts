@@ -1057,8 +1057,13 @@ export class SlackAdapter {
         if (pinned.some((info) => info.id === raw.id)) continue;
         if (this.accessPolicy) {
           // Listed only as a fresh access check describes it, never as the
-          // list's metadata does; one that fails is left out.
+          // list's metadata does; one that fails is left out. A channel the
+          // list says the bot isn't in is never listed under the policy, so
+          // it's left out before that check: conversations.list gives every
+          // public channel in the workspace, and a check each would cost one
+          // conversations.info per workspace channel, not per joined one.
           if (!raw.id) continue;
+          if (!raw.is_im && !raw.is_mpim && raw.is_member === false) continue;
           try { raw = await this.readAccessConversation(raw.id); } catch { continue; }
         }
         const info = await this.describeConversation(raw, names);
