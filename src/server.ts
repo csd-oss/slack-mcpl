@@ -125,7 +125,7 @@ function dbg(tag: string, info: Record<string, unknown> = {}): void {
 
 /** Where the value of each argument a tool requires comes from, for a call that didn't give it. */
 const ARGUMENT_SOURCES = {
-  channelId: "list_channels shows each conversation's id.",
+  channelId: "Take it from the message's channelId=, or list_channels shows each conversation's id.",
   messageId:
     "Take it from the message: its id= (reply_message takes its thread= when it shows one, or its rootTs in " +
     "fetch_history and fetch_thread results), or from fetch_history's ids.",
@@ -140,16 +140,21 @@ const ARGUMENT_SOURCES = {
 } satisfies Record<string, string>;
 
 /** The bracketed header in front of an incoming message, e.g.
- *  `[#support (acme) thread=1718000000.000100 id=1718000000.000200] `. */
+ *  `[#support (acme) channelId=C1 thread=1718000000.000100 id=1718000000.000200] `.
+ *  channelId is given every time, as the tools take it: a DM is otherwise
+ *  named only "DM", and an agent that types a DM's id from memory can send
+ *  a reply to the wrong person. */
 export function locationHeader(loc: {
   conversation?: string;
   teamName?: string;
+  channelId?: string;
   threadTs?: string;
   messageId: string;
 }): string {
   const parts: string[] = [];
   if (loc.conversation) parts.push(loc.conversation);
   if (loc.teamName) parts.push(`(${loc.teamName})`);
+  if (loc.channelId) parts.push(`channelId=${loc.channelId}`);
   if (loc.threadTs) parts.push(`thread=${loc.threadTs}`);
   parts.push(`id=${loc.messageId}`);
   return `[${parts.join(' ')}] `;
@@ -173,11 +178,12 @@ export function backscrollLine(m: {
 /** The `<backscroll>` block given with the first message from a conversation. */
 export function backscrollBlock(
   messages: Parameters<typeof backscrollLine>[0][],
-  where: { channelName?: string; isDM: boolean },
+  where: { channelName?: string; isDM: boolean; channelId?: string },
 ): string {
   const attrs: string[] = [];
   if (where.channelName && !where.isDM) attrs.push(`channel="#${where.channelName}"`);
   if (where.isDM) attrs.push('dm="true"');
+  if (where.channelId) attrs.push(`channelId="${where.channelId}"`);
   attrs.push(`count="${messages.length}"`);
   return [`<backscroll ${attrs.join(' ')}>`, ...messages.map(backscrollLine), '</backscroll>'].join('\n');
 }
@@ -747,7 +753,7 @@ export class SlackMcplServer {
         const result = await this.posting(content, () => this.slack.sendMessage(channelId, content));
         this.stateTracker.recordSent(result.messageId, channelId, content);
         this.markOutbound(channelId);
-        return { messageId: result.messageId };
+        return { messageId: result.messageId, to: this.recipient(channelId) };
       }
 
       case 'reply_message': {
@@ -757,7 +763,7 @@ export class SlackMcplServer {
         const result = await this.posting(content, () => this.slack.sendMessage(channelId, content, { threadTs }));
         this.stateTracker.recordSent(result.messageId, channelId, content);
         this.markOutbound(channelId);
-        return { messageId: result.messageId, threadTs };
+        return { messageId: result.messageId, threadTs, to: this.recipient(channelId) };
       }
 
       case 'upload_file': {
@@ -869,7 +875,7 @@ export class SlackMcplServer {
         }
         this.markOutbound(channelId);
         this.stateTracker.recordUploaded(result.fileId, channelId, { shareTs: result.shareTs, comment: comment !== undefined });
-        return { fileId: result.fileId };
+        return { fileId: result.fileId, to: this.recipient(channelId) };
       }
 
       case 'send_dm': {
@@ -878,7 +884,7 @@ export class SlackMcplServer {
         const result = await this.posting(content, () => this.slack.sendDM(userId, content));
         this.stateTracker.recordSent(result.messageId, result.channelId, content);
         this.markOutbound(result.channelId);
-        return { messageId: result.messageId, channelId: result.channelId };
+        return { messageId: result.messageId, channelId: result.channelId, to: this.recipient(result.channelId) };
       }
 
       case 'add_reaction': {
@@ -1096,6 +1102,13 @@ export class SlackMcplServer {
       throw new Error(`${notDone}: ${key} must be a non-empty string, and this call ${passed}. ${ARGUMENT_SOURCES[key]}`);
     }
     return v;
+  }
+
+  /** Who a write went to, as the conversation's registered label, so an
+   *  agent that sent to the wrong conversation sees it in the same turn. */
+  private recipient(channelId: string): string {
+    return this.channelManager.get(mcplChannelId(channelId))?.label
+      ?? `conversation ${channelId}, which this server hasn't listed`;
   }
 
   /** Record that the bot just sent to a conversation, for location headers. */
@@ -1836,7 +1849,7 @@ export class SlackMcplServer {
       );
     }
     if (backscroll.length > 0) {
-      blocks.push(backscrollBlock(backscroll, { channelName: meta?.name, isDM: msg.isDM }));
+      blocks.push(backscrollBlock(backscroll, { channelName: meta?.name, isDM: msg.isDM, channelId: msg.channelId }));
     }
     // Told with the first message the agent gets from here, addressed or not.
     // Counted as told only once the host has taken that message.
@@ -1856,6 +1869,7 @@ export class SlackMcplServer {
     const location = locationHeader({
       conversation,
       teamName: contextChanged ? this.slack.teamName : undefined,
+      channelId: msg.channelId,
       threadTs: msg.threadTs,
       messageId: msg.id,
     });

@@ -123,7 +123,7 @@ export function readOptions(args: Record<string, unknown>, kind: Kind, channelId
   if (!/^[CGD][A-Z0-9]+$/.test(channelId)) {
     throw refused(
       `channelId must be a Slack conversation id, such as C0123456789, and this call passed ${passed(channelId)}. ` +
-        "list_channels shows each conversation's id.",
+        "Take it from the message's channelId=, or list_channels shows each conversation's id.",
     );
   }
   if (kind === 'thread') timestamp(threadTs, 'threadTs', `${PARENT_IDS}.`);
