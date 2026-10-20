@@ -65,7 +65,7 @@ import { CapabilityGrant } from './grant.js';
 import { McplRpcError, capabilityDenied } from './errors.js';
 import { explainSlackError } from './slack-errors.js';
 import { associatedFileUrl, attachmentFetchHint } from './file-access.js';
-import { NOTHING_RETURNED, PARENT_IDS, refuseUnknownArguments } from './history-read.js';
+import { CHANNEL_IDS, NOTHING_RETURNED, PARENT_IDS, refuseUnknownArguments } from './history-read.js';
 import {
   fetchAttachmentBytes,
   parseSlackAttachmentUrl,
@@ -125,7 +125,7 @@ function dbg(tag: string, info: Record<string, unknown> = {}): void {
 
 /** Where the value of each argument a tool requires comes from, for a call that didn't give it. */
 const ARGUMENT_SOURCES = {
-  channelId: "Take it from the message's channelId=, or list_channels shows each conversation's id.",
+  channelId: `${CHANNEL_IDS}.`,
   messageId:
     "Take it from the message: its id= (reply_message takes its thread= when it shows one, or its rootTs in " +
     "fetch_history and fetch_thread results), or from fetch_history's ids.",
