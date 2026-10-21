@@ -56,6 +56,7 @@ import {
   type SlackWait,
 } from './slack-adapter.js';
 import { toolDefinitions } from './tools.js';
+import { dbg } from './debug-log.js';
 import { withToolClasses } from './tool-classes.js';
 import { buildFeatureSets, buildServerCapabilities, featureSetForTool, MESSAGING_FEATURE_SET } from './feature-sets.js';
 import { ChannelManager, mcplChannelId, parseMcplChannelId, toDescriptor } from './channels.js';
@@ -72,7 +73,7 @@ import {
   toFetchResult,
   type AttachmentRef,
 } from './content.js';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createRequire } from 'node:module';
 
@@ -101,22 +102,6 @@ const MAX_UPLOAD_BASE64 = Math.ceil(MAX_UPLOAD_BYTES / 3) * 4;
  *  can't see any more: Slack's own words are "already been deleted" and "does
  *  not exist, or is not visible to the calling user". */
 const FILE_GONE = ['file_deleted', 'file_not_found'];
-
-// Diagnostic file logger — bypasses the host's stderr capture. Set
-// SLACK_MCPL_DEBUG_LOG in the spawn env to a writable absolute path to
-// enable; leave unset for no-op.
-const _DEBUG_LOG_PATH = process.env.SLACK_MCPL_DEBUG_LOG;
-function dbg(tag: string, info: Record<string, unknown> = {}): void {
-  if (!_DEBUG_LOG_PATH) return;
-  try {
-    appendFileSync(
-      _DEBUG_LOG_PATH,
-      `${new Date().toISOString()} ${tag} ${JSON.stringify(info)}\n`,
-    );
-  } catch {
-    // Logging is best-effort; never break the server because of it.
-  }
-}
 
 /** Where the value of each argument a tool requires comes from, for a call that didn't give it. */
 const ARGUMENT_SOURCES = {

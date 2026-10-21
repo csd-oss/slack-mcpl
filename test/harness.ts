@@ -207,6 +207,7 @@ export interface HarnessOptions {
 
 export interface Harness {
   server: SlackMcplServer;
+  slack: SlackAdapter;
   socket: FakeSocket;
   host: McplConnection;
   hostSaw: JsonRpcRequest[];
@@ -298,7 +299,7 @@ export function harness(opts: HarnessOptions = {}): Harness {
   const { slack, socket, posts, reactions, reads, uploads, uploadsBegun, deletedMessages, deletedFiles } = fakeSlack(opts);
   const server = new SlackMcplServer(slack, { subscribeMemberChannels: opts.subscribeMemberChannels });
   const { host, hostSaw, served, close } = connectHost(server, opts);
-  return { server, socket, host, hostSaw, posts, reactions, reads, uploads, uploadsBegun, deletedMessages, deletedFiles, served, close };
+  return { server, slack, socket, host, hostSaw, posts, reactions, reads, uploads, uploadsBegun, deletedMessages, deletedFiles, served, close };
 }
 
 export async function initialize(h: { host: McplConnection }, mcpl: boolean) {

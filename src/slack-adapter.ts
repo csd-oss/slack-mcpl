@@ -21,6 +21,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { WebClient, ErrorCode, LogLevel, type Logger, type WebAPICallResult, type WebClientOptions } from '@slack/web-api';
 import { SocketModeClient } from '@slack/socket-mode';
+import { dbg } from './debug-log.js';
 import { NOTHING_RETURNED, SLACK_TS, readBounded, readOptions, type HistoryReadResult, type ReadStop } from './history-read.js';
 import {
   formatSlackText,
@@ -257,6 +258,10 @@ interface SlackMessageEvent {
   channel_type?: string;
   team?: string;
   files?: Array<{ url_private?: string; name?: string; mimetype?: string }>;
+  /** Slack's grant for a search on this message's behalf (Real-time Search
+   *  API), given on a mention or a DM to an app with Agents & AI Apps on. */
+  action_token?: string;
+  assistant_thread?: { action_token?: string };
 }
 
 /** The fields of a conversations.list/info entry this adapter dereferences —
@@ -790,6 +795,9 @@ export class SlackAdapter {
   /** Each conversation's last event's turn, which the next event's delivery
    *  waits for. */
   private inbound = new Map<string, Promise<void>>();
+  /** Each conversation's newest action_token and when it arrived. Kept here,
+   *  never shown to the agent: a search is made with it on the agent's behalf. */
+  private actionTokens = new Map<string, { token: string; at: number }>();
   private userNameCache = new Map<string, string>();
   private messageHandlers: Array<(msg: SlackMessageData) => void> = [];
   private socketStarted = false;
@@ -840,9 +848,16 @@ export class SlackAdapter {
     // sum, within the Web API client's 100 requests at once, which every
     // conversation's lookups share. From delivery on, the server keeps the
     // same order with its own chain per conversation (setupSlackForwarding).
+    // app_mention repeats a channel mention's message event; it is read only
+    // for its action_token, in case the message event comes without one.
+    this.socket.on('app_mention', ({ event, ack }) => {
+      void Promise.resolve().then(() => ack()).catch(() => { /* ignore */ });
+      this.noteActionToken(event);
+    });
     this.socket.on('message', ({ event, ack }) => {
       // Always ack first — Slack redelivers unacked envelopes.
       void Promise.resolve().then(() => ack()).catch(() => { /* ignore */ });
+      this.noteActionToken(event);
       // Settled into a value at once, so a preparation that fails before its
       // turn is never a rejection nothing handles.
       const prepared = this.prepareMessageEvent(event).then(
@@ -864,6 +879,23 @@ export class SlackAdapter {
 
   onMessage(handler: (msg: SlackMessageData) => void): void {
     this.messageHandlers.push(handler);
+  }
+
+  /** Keep an event's action_token for its conversation, and log which fields
+   *  the event had (names only), so a live run shows whether Slack sent one. */
+  private noteActionToken(event: SlackMessageEvent | undefined): void {
+    const token = event?.action_token ?? event?.assistant_thread?.action_token;
+    const channel = typeof event?.channel === 'string' ? event.channel : undefined;
+    if (typeof token === 'string' && token && channel) this.actionTokens.set(channel, { token, at: Date.now() });
+    dbg('slack:event', {
+      type: event?.type, subtype: event?.subtype, channel,
+      fields: Object.keys(event ?? {}), actionToken: typeof token === 'string' && token.length > 0,
+    });
+  }
+
+  /** The newest action_token a conversation's messages brought, if any. */
+  actionToken(channelId: string): { token: string; at: number } | undefined {
+    return this.actionTokens.get(channelId);
   }
 
   /** Open the Socket Mode connection. Resolves once connected. */
