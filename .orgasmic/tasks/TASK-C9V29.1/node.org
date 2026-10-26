@@ -1,3 +1,4 @@
+#+plugin: tasks schema=1
 #+title: orgasmic task TASK-C9V29.1
 #+orgasmic_version: 2
 
