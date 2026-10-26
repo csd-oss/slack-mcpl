@@ -1,10 +1,10 @@
-#+title: slack-mcpl-history-review
+#+title: theaspirational.slack-mcpl
 #+orgasmic_version: 2
 
-* PROJECT slack-mcpl-history-review
+* PROJECT theaspirational.slack-mcpl
 :PROPERTIES:
 :PROJECT_UID:         a066c9a1-0582-4578-90f4-1059e42e2fa9
-:ID:                  slack-mcpl-history-review
+:ID:                  theaspirational.slack-mcpl
 :END:
 
 ** Mission
