@@ -1,0 +1,15 @@
+#+title: project rename
+#+orgasmic_version: 1
+
+* TX 2026-10-26 Mon 11:48:40 project.renamed theaspirational.slack-mcpl
+:PROPERTIES:
+:TX_ID:        tx-rename-376d32bc-3937-4d26-b602-1d8432c1471c
+:TIME:         [2026-10-26 Mon 11:48:40]
+:TYPE:         project.renamed
+:ACTOR:        operator
+:MACHINE:      c17b4726-2197-4476-a265-4515fb584352
+:PROJECT:      theaspirational.slack-mcpl
+:OLD_PROJECT_ID: slack-mcpl-history-review
+:NEW_PROJECT_ID: theaspirational.slack-mcpl
+:PROJECT_UID:  a066c9a1-0582-4578-90f4-1059e42e2fa9
+:END:

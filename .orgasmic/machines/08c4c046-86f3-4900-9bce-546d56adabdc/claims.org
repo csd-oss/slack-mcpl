@@ -8,7 +8,7 @@
 :TYPE:         task.claimed
 :ACTOR:        aspirational
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :TASK:         CONV-P8129
 :TARGET:       .orgasmic/conversations/CONV-P8129
 :RUN_ID:       run-01M57DG4PPKAHRVFZRZF7GMJC8

@@ -1,4 +1,4 @@
-#+title: slack-mcpl-history-review manager handoff
+#+title: theaspirational.slack-mcpl manager handoff
 #+orgasmic_version: 2
 #+scope: project
 #+plugin: handoff schema=1

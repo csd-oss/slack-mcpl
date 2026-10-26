@@ -1,4 +1,4 @@
-#+title: slack-mcpl-history-review active goal
+#+title: theaspirational.slack-mcpl active goal
 #+orgasmic_version: 2
 #+scope: project
 #+plugin: goal schema=1

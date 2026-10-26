@@ -8,7 +8,7 @@
 :TYPE:         manager.tier
 :ACTOR:        aspirational
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :TASK:         CONV-P8129
 :REASON:       Report-only independent review; no tracked source changes are authorized for the worker
 :TIER:         trivial
@@ -23,7 +23,7 @@
 :TYPE:         manager.action
 :ACTOR:        aspirational
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :TASK:         CONV-P8129
 :REASON:       Exact requested claude/acp model=claude-opus-5-5 effort=high refused in dry-run: last live model catalog lacks that model ID. No reviewer run started and no alias/model/route substitution was made.
 :EVENT_ID:     81f4cb77-3a09-4046-a140-aa6d2a5db652
@@ -37,7 +37,7 @@
 :TYPE:         manager.dispatch_started
 :ACTOR:        aspirational
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :TASK:         CONV-P8129
 :TARGET:       .orgasmic/tmp/sessions/dispatch-CONV-P8129-reviewer-20261018T114906-run-01M57DG4PPKAHRVFZRZF7GMJC8.jsonl
 :REASON:
@@ -76,7 +76,7 @@
 :TYPE:         run.created
 :ACTOR:        aspirational
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :TASK:         CONV-P8129
 :TARGET:       .orgasmic/tmp/sessions/dispatch-CONV-P8129-reviewer-20261018T114906-run-01M57DG4PPKAHRVFZRZF7GMJC8.jsonl
 :REASON:       Owner requested exact Opus 5.5 high ACP review; Default verified resolves to claude-opus-5-5 on approved Claude 2.1.302, substantive review gated on actual session evidence.
@@ -108,7 +108,7 @@
 :TYPE:         run.asked
 :ACTOR:        aspirational
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :TASK:         CONV-P8129
 :REASON:       May I begin the report-only review after the coordinator has verified my actual Claude ACP session model is claude-opus-5-5 and effort high?
 :RUN_ID:       run-01M57DG4PPKAHRVFZRZF7GMJC8
@@ -125,7 +125,7 @@
 :TYPE:         run.answered
 :ACTOR:        aspirational
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :TASK:         CONV-P8129
 :REASON:       Yes. Coordinator verified your native assistant transcript model is exactly claude-opus-5-5; live ACP effort is high; route claude/acp is not simulated; HEAD is 6de851e304d67e0341d269e0ce73c2e6a8cbb4d6. Begin the entire-main independent report-only review now. Unchanged-lockfile node_modules were copied from the tested integration worktree; no installation needed. Keep tracked files unchanged; report severity-ranked confirmed findings with evidence, no fixes.
 :RUN_ID:       run-01M57DG4PPKAHRVFZRZF7GMJC8
@@ -140,7 +140,7 @@
 :TYPE:         reviewer.reported
 :ACTOR:        agent.reviewer
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :TASK:         CONV-P8129
 :RUN_ID:       run-01M57DG4PPKAHRVFZRZF7GMJC8
 :WORKTREE:     ~/Documents/Codex/2026-10-16/task/slack-opus-main-review-20261018
@@ -155,7 +155,7 @@
 :TYPE:         reviewer.done
 :ACTOR:        agent.reviewer
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :TASK:         CONV-P8129
 :REASON:       Independent report-only Opus5.5/high ACP review completed on exact main; three P2 findings independently reproduced, two low findings preserved; no source fixes or deploys.
 :WORKER_SESSION: be9a4d51-2c4b-4e17-af8c-6e3f9c76f4f2
@@ -181,7 +181,7 @@
 :TYPE:         dispatch.outcomes_acked
 :ACTOR:        aspirational
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :REASON:       acknowledged 1 outcome(s)
 :OUTCOME_IDS:  67094a53-0088-4539-9406-28f91a71c11b
 :ACKED_BY:     admin
@@ -195,7 +195,7 @@
 :TYPE:         dispatch.outcomes_acked
 :ACTOR:        aspirational
 :MACHINE:      08c4c046-86f3-4900-9bce-546d56adabdc
-:PROJECT:      slack-mcpl-history-review
+:PROJECT:      theaspirational.slack-mcpl
 :REASON:       acknowledged 1 outcome(s)
 :OUTCOME_IDS:  dfaa9ef9-7395-4dba-b21d-dbdee39b41d1
 :ACKED_BY:     admin
