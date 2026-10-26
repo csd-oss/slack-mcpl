@@ -1,0 +1,25 @@
+#+plugin: tasks schema=1
+#+title: orgasmic task TASK-H6B2X
+#+orgasmic_version: 2
+
+* BACKLOG TASK-H6B2X Make channels.typing optional: a host that does not grant it must keep slack.messaging
+:PROPERTIES:
+:UID: f19dab9e-4068-53c9-88a8-3b494704b78d
+:ID: TASK-H6B2X
+:PRIORITY: P2
+:END:
+
+** Note
+This ledger is PUBLIC. This task carries public facts only. An earlier attempt to file it failed on the daemon (request id alnold-slack-task-typing-optional-1; nothing was created); this is a NEW submission, not a replay.
+** Description
+In the fork's main, src/feature-sets.ts lists 'channels.typing' among the uses of the slack.messaging feature set (line 62 at 3302d700). Feature-set derivation is fail-closed, so a host that does not grant channels.typing loses the whole slack.messaging set, not only the thread status.
+** Evidence
+- This is the first blocking finding (R1-1) in the upstream maintainers' nightly review of upstream PR 12 (2026-10-21) and in nissa-seru's comment there, which reproduced it with a host that grants the set the repository's test harness grants: messaging was disabled and no push/event was delivered. I read the fork's file and that public review; I have NOT reproduced it myself.
+- Unknown: whether any deployed host grants channels.typing.
+** Acceptance
+- A host that does not grant channels.typing keeps slack.messaging and simply gets no thread status. Decide the shape (a separate feature set, or an optional use) in line with the maintainers' question on PR 12.
+- A test that grants the harness set WITHOUT channels.typing and asserts messaging still works; red on current main, green after the change.
+- Check the same pattern for other optional capabilities in feature-sets.ts.
+- Independent review (GPT, per the current rule). Branch only; the owner decides any merge to main.
+** Not in scope
+The reaction features, the upstream merge (separate task), reworking PR 12 upstream.

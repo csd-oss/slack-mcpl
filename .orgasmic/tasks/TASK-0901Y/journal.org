@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-0901Y
+#+orgasmic_version: 2
+
+* tx-20261026-theaspirationalslack-758a6205-b576-4c0a-ab4d-0ba6c3c8aa79 task.created
+:PROPERTIES:
+:TX_ID:   tx-20261026-theaspirationalslack-758a6205-b576-4c0a-ab4d-0ba6c3c8aa79
+:TIME:    [2026-10-26 Mon 11:49:57]
+:TYPE:    task.created
+:ACTOR:   alnold
+:MACHINE: c17b4726-2197-4476-a265-4515fb584352
+:PROJECT: theaspirational.slack-mcpl
+:TASK: TASK-0901Y
+:TARGET: .orgasmic/tasks/TASK-0901Y/node.org
+:REASON: created task TASK-0901Y
+:EVENT_ID: ef07d3ac-a10d-4ad0-9644-0a315a42c07a
+:REQUEST_REPLAY_V1: {"request_id":"alnold-slack-merge-upstream-3/tx","mutation":{"operation":"task.created","project_id":"theaspirational.slack-mcpl","payload_sha256":"e35c4bdcf4835c7ce02bce07efbbc4b1c43cb73d784c94efe11ee9e281c370f8"},"mutation_id":"TASK-0901Y","written_paths":[{"project":"theaspirational.slack-mcpl","relative":".orgasmic/tasks/TASK-0901Y/node.org"},{"project":"theaspirational.slack-mcpl","relative":".orgasmic/tasks/TASK-0901Y/journal.org"}]}
+:END:

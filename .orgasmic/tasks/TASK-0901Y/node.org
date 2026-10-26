@@ -1,0 +1,26 @@
+#+plugin: tasks schema=1
+#+title: orgasmic task TASK-0901Y
+#+orgasmic_version: 2
+
+* BACKLOG TASK-0901Y Merge upstream anima-research/slack-mcpl main (d861f4c) into fork main: resolve, test, review (branch only)
+:PROPERTIES:
+:UID: ce1418d8-a2f9-5eb8-a63d-d9b36fcd14c2
+:ID: TASK-0901Y
+:PRIORITY: P2
+:END:
+
+** Note
+This ledger is PUBLIC. This task carries public facts only. Earlier attempts to file it failed on the daemon (request ids alnold-slack-task-merge-upstream-1 and -2; nothing was created); this is a NEW submission, not a replay.
+** Description
+Prepare, on a BRANCH only, the merge of upstream anima-research/slack-mcpl main d861f4c (2026-10-21) into the fork's main 3302d700 (2026-10-21). Nothing touches the fork's main until the owner decides.
+** Evidence (read-only audit of public GitHub on 2026-10-26; no tests were run)
+- The fork's main is 45 commits ahead and 6 behind upstream main; merge-base bff8f10.
+- The 6 upstream commits are one change (upstream PR 45): refuse a lone surrogate in message text and ids before Slack is asked. 5 files, +170/-6 lines.
+- A trial git merge-tree shows ONE conflicted file, src/slack-adapter.ts, with two hunks (sendMessage and editMessage). The fork side calls `await this.requireWritableConversation(channelId, 'chat:write', ...)`; the upstream side calls `this.assertWritable(...)` and then `assertSendable(text, ...)`. The resolution must keep the fork's scope-aware check AND upstream's text check, in the order upstream documents (allow-list refusal first, then the text, both before any Slack call).
+** Acceptance
+- A branch from the fork's main with the upstream merge; the resolution explained hunk by hunk.
+- npm ci, tsc and the full test suite run; exact counts reported, including upstream's new tests; red to green for any new test.
+- Independent review (GPT, per the current rule) before any merge to the fork's main.
+- The owner decides the merge to main; deploying any agent from it needs a separate qualification and approval.
+** Not in scope
+Typing optionality (separate task), reactions, rework of open upstream PRs.

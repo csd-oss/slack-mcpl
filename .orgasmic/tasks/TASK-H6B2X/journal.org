@@ -1,0 +1,17 @@
+#+title: orgasmic journal TASK-H6B2X
+#+orgasmic_version: 2
+
+* tx-20261026-theaspirationalslack-b7774217-4795-4830-8273-cad796791fd3 task.created
+:PROPERTIES:
+:TX_ID:   tx-20261026-theaspirationalslack-b7774217-4795-4830-8273-cad796791fd3
+:TIME:    [2026-10-26 Mon 11:49:57]
+:TYPE:    task.created
+:ACTOR:   alnold
+:MACHINE: c17b4726-2197-4476-a265-4515fb584352
+:PROJECT: theaspirational.slack-mcpl
+:TASK: TASK-H6B2X
+:TARGET: .orgasmic/tasks/TASK-H6B2X/node.org
+:REASON: created task TASK-H6B2X
+:EVENT_ID: e1e658f4-1d92-4695-a692-e2d32ea4aaf5
+:REQUEST_REPLAY_V1: {"request_id":"alnold-slack-typing-optional-2/tx","mutation":{"operation":"task.created","project_id":"theaspirational.slack-mcpl","payload_sha256":"5f6e16fde18023ea29316e5184cb66b20ef845c5bb0aa85a186045d05d4aa73e"},"mutation_id":"TASK-H6B2X","written_paths":[{"project":"theaspirational.slack-mcpl","relative":".orgasmic/tasks/TASK-H6B2X/node.org"},{"project":"theaspirational.slack-mcpl","relative":".orgasmic/tasks/TASK-H6B2X/journal.org"}]}
+:END:
