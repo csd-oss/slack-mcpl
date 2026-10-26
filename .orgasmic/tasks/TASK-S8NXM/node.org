@@ -1,0 +1,9 @@
+#+plugin: tasks schema=1
+#+title: orgasmic task TASK-S8NXM
+#+orgasmic_version: 2
+
+* CANCELLED TASK-S8NXM probe (Tarn): rename verification, will cancel
+:PROPERTIES:
+:UID: 08eb3b53-0371-5c05-976c-64eecdc2c140
+:ID: TASK-S8NXM
+:END:
