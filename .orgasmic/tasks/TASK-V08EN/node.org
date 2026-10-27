@@ -1,0 +1,34 @@
+#+plugin: tasks schema=1
+#+title: orgasmic task TASK-V08EN
+#+orgasmic_version: 2
+
+* BACKLOG TASK-V08EN Slack reactions: show existing reactions in history and thread output, and add a tool to remove the agent's own reaction
+:PROPERTIES:
+:UID: 12690dc7-dbcf-51f7-8a6d-10ab1b1733f9
+:ID: TASK-V08EN
+:PRIORITY: P3
+:END:
+
+** Description
+Agents using this connector can add an emoji reaction (`add_reaction`) but cannot (a) see which reactions are already on a message when they read history, or (b) remove a reaction they added. Some workspaces use reactions as a shared status convention, so an agent needs to read the existing reactions before acting and to undo its own. This task asks for those two missing capabilities. Filing only; nothing is dispatched, and the owner has not approved an implementation or a rollout.
+
+** Observed (source-read only, fork main 3302d700c058f9de3a833ab7ee021903dd05cc1c; nothing built or run)
+- `add_reaction` exists (`src/tools.ts`, `src/server.ts`, `src/slack-adapter.ts` calling `reactions.add`).
+- There is no tool that removes a reaction. The adapter calls `reactions.remove` only internally, to take off the optional acknowledgement reaction (`SLACK_ACK_REACTION`).
+- A case-insensitive search of `src/` for `reactions` finds only those add/remove calls and error-text and permission entries; none in the code that formats `fetch_history` or `fetch_thread` output, so I believe those outputs do not show existing reactions. I did not run it, and Slack's own history responses do carry reactions.
+- Upstream main d861f4c5a9e4522716190e8e7d17b3692a6bdc6f has the same shape.
+
+** Wanted
+1. `fetch_history` and `fetch_thread` show each message's existing reactions (emoji name and count, and which of them are the agent's own) within the output's existing size bounds.
+2. A tool to remove the agent's own reaction from a message (`reactions.remove`), with the same access-policy and write-permission checks as `add_reaction` and a clear error when Slack refuses.
+3. It must work for every workspace or installation of the same connector build, so any later rollout covers all of them.
+
+** Questions for design
+- Should reaction removal be a separate tool, or an option on `add_reaction`?
+- Is the `reactions:read` scope needed, and does the current manifest grant it? (Not checked.)
+- Should incoming reaction events be delivered? Not requested here.
+
+** Acceptance
+- Tests with a mocked Slack client: reactions appear in history and thread output; removing an own reaction succeeds; removing one that is not the agent's own, or a missing one, fails with a clear fixed message; the access policy blocks both read and removal where it should.
+- No change to existing output for messages without reactions.
+- A reviewer reads the diff. Merge and rollout are separate owner decisions.
