@@ -8,6 +8,9 @@ export interface SlackAccessPolicyConfig {
    * proves fresh bot membership only when channels:read is unavailable; a C
    * prefix or successful history request cannot establish public visibility. */
   historyMembershipFallbackChannels?: string[];
+  /** Exact group DM (mpim) IDs the bot may read while a member. Missing or
+   * empty denies every group DM. Writing also needs the ID in writeChannels. */
+  groupDms?: string[];
 }
 
 /** In-process proof only: JSON, message text and Slack metadata cannot mint it. */
@@ -28,6 +31,7 @@ export class SlackAccessPolicy {
   private readonly dmUsers: ReadonlySet<string>;
   private readonly readJoinedChannels: boolean;
   private readonly historyFallbackChannels: ReadonlySet<string>;
+  private readonly groupDms: ReadonlySet<string>;
 
   constructor(config: SlackAccessPolicyConfig) {
     if (!Array.isArray(config.writeChannels) || !config.writeChannels.every((id) => typeof id === 'string' && /^[CG][A-Z0-9]+$/.test(id))
@@ -40,6 +44,9 @@ export class SlackAccessPolicy {
     if (!Array.isArray(fallback) || !fallback.every((id) => typeof id === 'string'
         && /^C[A-Z0-9]+$/.test(id) && this.writeChannels.has(id))) throw new Error('History membership fallback must name pinned public write channels');
     this.historyFallbackChannels = new Set(fallback);
+    const groupDms = config.groupDms ?? [];
+    if (!Array.isArray(groupDms) || !groupDms.every((id) => typeof id === 'string' && /^[CG][A-Z0-9]+$/.test(id))) throw new Error('Group DMs must be conversation IDs');
+    this.groupDms = new Set(groupDms);
   }
 
   historyMembershipFallbacks(scopes: readonly string[] | undefined): string[] {
@@ -52,6 +59,8 @@ export class SlackAccessPolicy {
   }
 
   get dmsWritable(): boolean { return this.dmUsers.size > 0; }
+
+  get groupDmsReadable(): boolean { return this.groupDms.size > 0; }
 
   /** A synchronous configuration hint, never an authorization decision. */
   mayWrite(channelId: string): boolean {
@@ -66,10 +75,16 @@ export class SlackAccessPolicy {
     if (!this.dmUsers.has(userId)) throw new Error(`Direct messages with ${userId} are not allowed by the Slack access policy`);
   }
 
-  /** Require exact, fresh metadata. Group-DM members need a separate policy. */
-  requireReadable(channelId: string, conversation: AccessConversation | undefined, scopes: readonly string[] | undefined): 'channel' | 'private_channel' | 'dm' {
+  /** Require exact, fresh metadata. A group DM is readable only as a member
+   * and only when groupDms names it. */
+  requireReadable(channelId: string, conversation: AccessConversation | undefined, scopes: readonly string[] | undefined): 'channel' | 'private_channel' | 'dm' | 'group_dm' {
+    if (conversation?.is_mpim === true && conversation.is_im !== true && conversation.id === channelId
+        && /^[CG][A-Z0-9]+$/.test(channelId) && this.groupDms.has(channelId) && conversation.is_member === true) {
+      this.requireScope(scopes, 'mpim:read');
+      return 'group_dm';
+    }
     if (!conversation || conversation.id !== channelId || conversation.is_mpim === true) {
-      throw new Error(`Conversation ${channelId} has missing or unsupported membership metadata`);
+      throw new Error(`Conversation ${channelId} has missing or unsupported membership metadata${conversation?.is_mpim === true ? ' (a group DM must be a joined one named in groupDms)' : ''}`);
     }
     if (conversation.is_im === true) {
       if ((conversation.is_mpim !== undefined && conversation.is_mpim !== false)

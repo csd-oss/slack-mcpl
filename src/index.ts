@@ -108,7 +108,8 @@ async function main(): Promise<void> {
   );
   console.error(
     `[slack-mcpl] writes: ${optional.accessPolicy ? 'explicit access policy' : sendChannels?.length ? `only ${sendChannels.join(', ')}` : 'anywhere'}; ` +
-      `DMs: ${optional.accessPolicy ? optional.accessPolicy.dmUsers.length ? 'explicit peers' : 'off' : disableDms ? 'off' : 'on'}`,
+      `DMs: ${optional.accessPolicy ? optional.accessPolicy.dmUsers.length ? 'explicit peers' : 'off' : disableDms ? 'off' : 'on'}` +
+      (optional.accessPolicy ? `; group DMs: ${optional.accessPolicy.groupDms?.length ? 'explicit list' : 'off'}` : ''),
   );
 
   // Take pending acknowledgement reactions off before exiting, for 5 s at

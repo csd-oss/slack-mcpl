@@ -238,7 +238,8 @@ adapter.configureAccessPolicy({
 ```
 
 This separates joined-channel reads from configured channel writes and allowed
-one-to-one DM peers. An empty `dmUsers` list denies all DMs; group DMs are denied.
+one-to-one DM peers. An empty `dmUsers` list denies all DMs; group DMs are denied
+unless `groupDms` names them (below).
 Each incoming event and operation validates fresh conversation metadata and the
 required token scopes. Listing includes only confirmed joined channels and
 allowed DMs, even with `includeNonMember`. User-directory lookup remains global
@@ -249,6 +250,22 @@ policy, existing flags and behavior are unchanged.
 With an explicit policy, its `dmUsers` list is authoritative for DM read/write
 admission; the legacy `SLACK_DM_USERS` and `SLACK_DISABLE_DMS` controls describe
 the no-policy mode. Use an empty policy `dmUsers` list to disable DMs explicitly.
+
+An optional `groupDms` list names the exact group DM (mpim) conversation IDs the
+bot may read. Missing or empty denies every group DM, as before. A group DM it
+names is readable only while the bot is a member and the token has `mpim:read`;
+`fetch_history` and `fetch_thread` also need `mpim:history`. To write there,
+put the same ID in `writeChannels` too: a group DM in `groupDms` alone is
+read-only. `list_channels` then lists allowed group DMs (kind `group_dm`, with
+`writable` set accordingly), and their incoming `message.mpim` events arrive as
+channel messages: ambient unless they mention the bot, as in a private channel.
+Group DMs the list doesn't name are neither listed nor delivered. With recipient
+routing, an allowed group DM is admitted as a joined private channel, so its
+messages are delivered only when `readJoinedChannels` is `true`.
+
+```json
+{"readJoinedChannels":true,"writeChannels":["CGROUPDM"],"dmUsers":["UOPERATOR"],"groupDms":["CGROUPDM"]}
+```
 
 An optional `historyMembershipFallbackChannels` list names exact write destinations
 that the operator has independently verified are public. If `channels:read` is
@@ -481,7 +498,7 @@ Boolean switches take `true`/`false` (also `1`/`0`, `yes`/`no`); any other value
 | `SLACK_SUBSCRIPTIONS_FILE` | no | JSON file persisting ambient subscriptions across restarts: an array of IDs, or `{subscribed, muted}` while anything is muted (older versions read the object form as empty) |
 | `SLACK_BACKSCROLL_LIMIT` | no | Messages fetched on first interaction with a conversation (default 50; `0` disables automatic backscroll) |
 | `SLACK_MCPL_DEBUG_LOG` | no | Absolute path for a diagnostic file log |
-| `SLACK_ACCESS_POLICY` | no | Explicit JSON policy: `readJoinedChannels`, `writeChannels`, `dmUsers`, optional `historyMembershipFallbackChannels`. Omit to retain legacy controls. See the access-policy section above. |
+| `SLACK_ACCESS_POLICY` | no | Explicit JSON policy: `readJoinedChannels`, `writeChannels`, `dmUsers`, optional `groupDms` and `historyMembershipFallbackChannels`. Omit to retain legacy controls. See the access-policy section above. |
 | `SLACK_RECIPIENT_ROUTING` | no | Opt-in JSON containing absolute private `stateFile`, installation `namespace`, optional `expectedBotUserId`. Requires explicit access policy, Node 24+ on POSIX, and a compatible recipient-aware MCPL host. |
 | `SLACK_DISABLED_TOOLS` | no | Comma-separated known tool names to hide and refuse, including direct invocation. For example, operators may disable subscription editing while retaining joined-channel ambient reads. |
 

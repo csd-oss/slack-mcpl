@@ -930,9 +930,12 @@ export class SlackAdapter {
   // ── Conversations ──
 
   private conversationTypes(): string[] {
-    // An explicit access policy never lists group DMs, and DMs only when it
-    // allows some peer.
-    if (this.accessPolicy) return this.accessPolicy.dmsWritable ? ['public_channel', 'private_channel', 'im'] : ['public_channel', 'private_channel'];
+    // An explicit access policy lists DMs only when it allows some peer, and
+    // group DMs only when it names some.
+    if (this.accessPolicy) {
+      return ['public_channel', 'private_channel', ...(this.accessPolicy.dmsWritable ? ['im'] : []),
+        ...(this.accessPolicy.groupDmsReadable ? ['mpim'] : [])];
+    }
     return this.disableDms ? ['public_channel', 'private_channel'] : Object.keys(TYPE_SCOPE);
   }
 
@@ -1142,7 +1145,8 @@ export class SlackAdapter {
   ): Promise<SlackApiConversation | undefined> {
     if (!this.accessPolicy) { await this.assertNotDm(channelId, notDone); return; }
     const conversation = await this.readAccessConversation(channelId);
-    this.accessPolicy.requireScope(this.scopes, conversation.is_im ? 'im:history' : conversation.is_private ? 'groups:history' : 'channels:history');
+    this.accessPolicy.requireScope(this.scopes, conversation.is_im ? 'im:history' : conversation.is_mpim ? 'mpim:history'
+      : conversation.is_private ? 'groups:history' : 'channels:history');
     return conversation;
   }
 
@@ -1825,8 +1829,10 @@ export class SlackAdapter {
       // Fresh admission precedes dedup and any wake decision.
       const conversation = await this.requireHistoryConversation(event.channel);
       if (conversation?.is_im && conversation.user !== event.user) return;
+      // An allowed group DM is admitted as a joined private channel: it is
+      // delivered and woken like one, and routing's admission has no other kind.
       supportAccess = {version: 1, channelId: event.channel, readable: true,
-        kind: conversation!.is_im ? 'dm' : conversation!.is_private ? 'private_channel' : 'channel',
+        kind: conversation!.is_im ? 'dm' : conversation!.is_mpim || conversation!.is_private ? 'private_channel' : 'channel',
         ...(conversation!.is_im ? {dmPeer: conversation!.user} : {joined: true as const})};
     }
 

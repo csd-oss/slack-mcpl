@@ -12,6 +12,13 @@ test('optional profiles accept multiple configurable destinations and no deploym
     SLACK_RECIPIENT_ROUTING: JSON.stringify(recipientRouting), SLACK_DISABLED_TOOLS: 'subscribe_channel, unsubscribe_channel'}),
     {accessPolicy, recipientRouting, disabledTools: ['subscribe_channel', 'unsubscribe_channel']});
 });
+test('the policy may name group DMs, and refuses ones that are not conversation IDs', () => {
+  const withGroups = {...accessPolicy, groupDms: ['CGROUPDM']};
+  assert.deepEqual(optionalConfiguration({SLACK_ACCESS_POLICY: JSON.stringify(withGroups)}).accessPolicy, withGroups);
+  for (const groupDms of [['DPEER'], ['UPEER'], 'CGROUPDM']) {
+    assert.throws(() => optionalConfiguration({SLACK_ACCESS_POLICY: JSON.stringify({...accessPolicy, groupDms})}));
+  }
+});
 test('malformed or misspelled policy and recipient settings fail before connecting Slack', () => {
   for (const env of [
     {SLACK_ACCESS_POLICY: ''}, {SLACK_ACCESS_POLICY: 'null'},

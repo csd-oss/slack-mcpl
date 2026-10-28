@@ -28,7 +28,7 @@ export function optionalConfiguration(env: Record<string, string | undefined>) {
   let accessPolicy: SlackAccessPolicyConfig | undefined;
   if (env.SLACK_ACCESS_POLICY !== undefined) {
     const policy = object(json(env.SLACK_ACCESS_POLICY, 'SLACK_ACCESS_POLICY'),
-      ['readJoinedChannels', 'writeChannels', 'dmUsers', 'historyMembershipFallbackChannels'], 'Slack access policy');
+      ['readJoinedChannels', 'writeChannels', 'dmUsers', 'historyMembershipFallbackChannels', 'groupDms'], 'Slack access policy');
     new SlackAccessPolicy(policy as unknown as SlackAccessPolicyConfig);
     accessPolicy = policy as unknown as SlackAccessPolicyConfig;
   }
